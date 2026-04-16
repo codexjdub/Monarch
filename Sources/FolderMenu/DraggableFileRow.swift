@@ -120,8 +120,23 @@ class DraggableNSView: NSView, NSDraggingSource {
 
     private var mouseDownEvent: NSEvent?
     private var dragStarted = false
+    private var isDropTarget = false {
+        didSet { needsDisplay = true }
+    }
 
     override var acceptsFirstResponder: Bool { true }
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        registerForDraggedTypes([.fileURL])
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        wantsLayer = true
+        registerForDraggedTypes([.fileURL])
+    }
 
     // Clicks in non-key windows (peek) register as-is rather than being
     // swallowed by window activation.
@@ -130,6 +145,68 @@ class DraggableNSView: NSView, NSDraggingSource {
     func draggingSession(_ session: NSDraggingSession,
                          sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
         return [.copy, .move]
+    }
+
+    // MARK: - Drop target (folder rows accept file drops)
+
+    private func incomingURLs(_ sender: NSDraggingInfo) -> [URL] {
+        (sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL]) ?? []
+    }
+
+    /// Only folder rows accept drops, and only for URLs that don't land inside
+    /// their own subtree.
+    private func acceptableDrop(_ sender: NSDraggingInfo) -> (URLs: [URL], dest: URL)? {
+        guard let item = fileItem, item.isDirectory else { return nil }
+        let urls = incomingURLs(sender).filter { src in
+            // Reject self-drops and drops into own subtree.
+            src != item.url && !item.url.path.hasPrefix(src.path + "/")
+        }
+        guard !urls.isEmpty else { return nil }
+        return (urls, item.url)
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard let (urls, dest) = acceptableDrop(sender) else { return [] }
+        isDropTarget = true
+        return FileDropHelper.preferredOperation(sources: urls, dest: dest)
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard let (urls, dest) = acceptableDrop(sender) else { return [] }
+        return FileDropHelper.preferredOperation(sources: urls, dest: dest)
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        isDropTarget = false
+    }
+
+    override func draggingEnded(_ sender: NSDraggingInfo) {
+        isDropTarget = false
+    }
+
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        acceptableDrop(sender) != nil
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard let (urls, dest) = acceptableDrop(sender) else { return false }
+        let op = FileDropHelper.preferredOperation(sources: urls, dest: dest)
+        let n = FileDropHelper.perform(urls: urls, into: dest, operation: op)
+        isDropTarget = false
+        return n > 0
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        if isDropTarget {
+            let inset = bounds.insetBy(dx: 3, dy: 2)
+            let path = NSBezierPath(roundedRect: inset, xRadius: 6, yRadius: 6)
+            NSColor.controlAccentColor.withAlphaComponent(0.18).setFill()
+            path.fill()
+            NSColor.controlAccentColor.withAlphaComponent(0.7).setStroke()
+            path.lineWidth = 1.5
+            path.stroke()
+        }
     }
 
     // MARK: Mouse
