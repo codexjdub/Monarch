@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import Combine
+import PDFKit
 
 // MARK: - Sort order (shared)
 
@@ -49,10 +50,47 @@ final class CascadeModel: ObservableObject {
         var index: Int   // -1 means no row focused in that window
     }
 
+    /// A level renders one of two things: a folder's contents (list of rows),
+    /// or a file preview (image / PDF / markdown / text).
+    enum Content {
+        case folder(items: [FileItem], rowFrames: [Int: NSRect])
+        case preview(kind: PreviewKind, url: URL)
+    }
+
     struct Level {
-        let folder: URL?              // nil = level 0 (root list)
-        var items: [FileItem]
-        var rowFrames: [Int: NSRect]  // screen frames, keyed by row index
+        /// Source URL for this level:
+        ///   - nil for level 0 (the root list of configured folders)
+        ///   - folder URL for .folder content
+        ///   - file URL for .preview content
+        let source: URL?
+        var content: Content
+
+        // Convenience accessors (return empty for preview levels).
+        var items: [FileItem] {
+            if case .folder(let items, _) = content { return items }
+            return []
+        }
+        var rowFrames: [Int: NSRect] {
+            if case .folder(_, let frames) = content { return frames }
+            return [:]
+        }
+        /// For .folder levels, swap in a new items array without touching frames.
+        mutating func setItems(_ newItems: [FileItem]) {
+            if case .folder(_, let frames) = content {
+                content = .folder(items: newItems, rowFrames: frames)
+            }
+        }
+        /// For .folder levels, record a row's screen frame.
+        mutating func setRowFrame(_ index: Int, _ frame: NSRect) {
+            if case .folder(let items, var frames) = content {
+                frames[index] = frame
+                content = .folder(items: items, rowFrames: frames)
+            }
+        }
+        var isPreview: Bool {
+            if case .preview = content { return true }
+            return false
+        }
     }
 
     // Published state — views render from this.
@@ -94,18 +132,17 @@ final class CascadeModel: ObservableObject {
     private func rebuildLevel0() {
         let items = folderStore.folders.map { FileItem(url: $0) }
         if levels.isEmpty {
-            levels = [Level(folder: nil, items: items, rowFrames: [:])]
+            levels = [Level(source: nil, content: .folder(items: items, rowFrames: [:]))]
         } else {
-            levels[0].items = items
+            levels[0].setItems(items)
         }
     }
 
     func reloadAll() {
         rebuildLevel0()
         for i in 1..<levels.count {
-            if let f = levels[i].folder {
-                levels[i].items = CascadeModel.loadFolder(f)
-            }
+            guard case .folder = levels[i].content, let f = levels[i].source else { continue }
+            levels[i].setItems(CascadeModel.loadFolder(f))
         }
     }
 
@@ -113,7 +150,7 @@ final class CascadeModel: ObservableObject {
 
     func setRowFrame(level: Int, index: Int, frame: NSRect) {
         guard levels.indices.contains(level) else { return }
-        levels[level].rowFrames[index] = frame
+        levels[level].setRowFrame(index, frame)
     }
 
     func hitTestRow(level: Int, at screenPoint: NSPoint) -> Int {
@@ -137,28 +174,50 @@ final class CascadeModel: ObservableObject {
         let item = levels[level].items[index]
         pendingOpen?.cancel(); pendingOpen = nil
 
-        if !item.isDirectory {
-            // File row: trim any child peek; file has no children.
-            closeDeeperThan(level)
+        // Folder row → schedule folder peek.
+        if item.isDirectory {
+            // Same folder already peeked? Just refresh path linkage.
+            if levels.count > level + 1,
+               case .folder = levels[level + 1].content,
+               levels[level + 1].source == item.url {
+                pathIndices[level] = index
+                return
+            }
+            let delay: TimeInterval = (levels.count > level + 1)
+                ? CascadeModel.mouseReplaceDelay
+                : CascadeModel.mouseOpenDelay
+            let url = item.url
+            let task = DispatchWorkItem { [weak self] in
+                self?.openFolderPeek(atLevel: level + 1, folder: url, parentIndex: index)
+            }
+            pendingOpen = task
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: task)
             return
         }
 
-        // Same folder already peeked? Just refresh path linkage.
-        if levels.count > level + 1, levels[level + 1].folder == item.url {
-            pathIndices[level] = index
+        // Previewable file → schedule preview peek.
+        if let kind = item.previewKind {
+            // Same preview already open? No-op.
+            if levels.count > level + 1,
+               case .preview(let existingKind, let existingURL) = levels[level + 1].content,
+               existingKind == kind, existingURL == item.url {
+                pathIndices[level] = index
+                return
+            }
+            let delay: TimeInterval = (levels.count > level + 1)
+                ? CascadeModel.mouseReplaceDelay
+                : CascadeModel.mouseOpenDelay
+            let url = item.url
+            let task = DispatchWorkItem { [weak self] in
+                self?.openPreviewPeek(atLevel: level + 1, url: url, kind: kind, parentIndex: index)
+            }
+            pendingOpen = task
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: task)
             return
         }
 
-        // Schedule open. Replacing a different peek is faster than opening from cold.
-        let delay: TimeInterval = (levels.count > level + 1)
-            ? CascadeModel.mouseReplaceDelay
-            : CascadeModel.mouseOpenDelay
-        let url = item.url
-        let task = DispatchWorkItem { [weak self] in
-            self?.openPeek(atLevel: level + 1, folder: url, parentIndex: index)
-        }
-        pendingOpen = task
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: task)
+        // Non-previewable file: trim any child peek.
+        closeDeeperThan(level)
     }
 
     /// Cursor entered a window (any level). Cancels a scheduled close.
@@ -230,11 +289,15 @@ final class CascadeModel: ObservableObject {
         guard levels.indices.contains(l),
               levels[l].items.indices.contains(focus.index) else { return }
         let item = levels[l].items[focus.index]
-        guard item.isDirectory else { return }
         pendingOpen?.cancel(); pendingOpen = nil
-        openPeek(atLevel: l + 1, folder: item.url, parentIndex: focus.index)
-        // Keyboard → jumps focus into the new peek (spec B).
-        focus = Focus(level: l + 1, index: 0)
+        if item.isDirectory {
+            openFolderPeek(atLevel: l + 1, folder: item.url, parentIndex: focus.index)
+            // Keyboard → on folder jumps focus into the new peek (spec B).
+            focus = Focus(level: l + 1, index: 0)
+        } else if let kind = item.previewKind {
+            openPreviewPeek(atLevel: l + 1, url: item.url, kind: kind, parentIndex: focus.index)
+            // Preview has no rows; focus stays on the parent row.
+        }
     }
 
     private func keyboardDrillOut() {
@@ -252,10 +315,11 @@ final class CascadeModel: ObservableObject {
         let item = levels[level].items[index]
         if item.isDirectory {
             pendingOpen?.cancel(); pendingOpen = nil
-            openPeek(atLevel: level + 1, folder: item.url, parentIndex: index)
+            openFolderPeek(atLevel: level + 1, folder: item.url, parentIndex: index)
             // Mouse click → focus stays on parent (spec A).
             focus = Focus(level: level, index: index)
         } else {
+            // Any file (previewable or not) opens in default app on click.
             NSWorkspace.shared.open(item.url)
             onDismiss()
         }
@@ -263,45 +327,69 @@ final class CascadeModel: ObservableObject {
 
     // MARK: - Peek open / close
 
-    private func openPeek(atLevel level: Int, folder: URL, parentIndex: Int) {
+    private func openFolderPeek(atLevel level: Int, folder: URL, parentIndex: Int) {
         // Close any existing peek at this level and deeper; we're replacing.
         closePeeks(atLevelsGreaterThan: level - 1)
 
         let items = CascadeModel.loadFolder(folder)
-        let state = Level(folder: folder, items: items, rowFrames: [:])
+        let state = Level(source: folder, content: .folder(items: items, rowFrames: [:]))
         if levels.count == level {
             levels.append(state)
         } else if levels.count > level {
-            // Shouldn't happen given we just closed — defensive.
             levels[level] = state
             if levels.count > level + 1 {
                 levels.removeLast(levels.count - level - 1)
             }
         } else {
-            // Gap (level too deep) — defensive, just skip.
             return
         }
         pathIndices[level - 1] = parentIndex
 
+        let content = AnyView(LevelListView(level: level, model: self))
+        presentPeek(atLevel: level, parentIndex: parentIndex, size: peekSize, content: content)
+    }
+
+    private func openPreviewPeek(atLevel level: Int, url: URL, kind: PreviewKind, parentIndex: Int) {
+        closePeeks(atLevelsGreaterThan: level - 1)
+
+        let size = CascadeModel.previewSize(for: url, kind: kind)
+        let state = Level(source: url, content: .preview(kind: kind, url: url))
+        if levels.count == level {
+            levels.append(state)
+        } else if levels.count > level {
+            levels[level] = state
+            if levels.count > level + 1 {
+                levels.removeLast(levels.count - level - 1)
+            }
+        } else {
+            return
+        }
+        pathIndices[level - 1] = parentIndex
+
+        let content = AnyView(PreviewLevelView(level: level, url: url, kind: kind, model: self))
+        presentPeek(atLevel: level, parentIndex: parentIndex, size: size, content: content)
+    }
+
+    private func presentPeek(atLevel level: Int, parentIndex: Int, size: NSSize, content: AnyView) {
         // Position the new peek window from the parent row's screen frame.
         let anchor = levels[level - 1].rowFrames[parentIndex] ?? .zero
         let screen = NSScreen.screens.first(where: { $0.frame.contains(anchor.origin) })
                   ?? NSScreen.main
                   ?? NSScreen.screens.first!
 
-        var origin = NSPoint(x: anchor.maxX + 2, y: anchor.maxY - peekSize.height)
-        if origin.x + peekSize.width > screen.visibleFrame.maxX {
-            origin.x = anchor.minX - peekSize.width - 2
+        var origin = NSPoint(x: anchor.maxX + 2, y: anchor.maxY - size.height)
+        if origin.x + size.width > screen.visibleFrame.maxX {
+            origin.x = anchor.minX - size.width - 2
         }
         if origin.y < screen.visibleFrame.minY + 8 {
             origin.y = screen.visibleFrame.minY + 8
         }
-        if origin.y + peekSize.height > screen.visibleFrame.maxY {
-            origin.y = screen.visibleFrame.maxY - peekSize.height
+        if origin.y + size.height > screen.visibleFrame.maxY {
+            origin.y = screen.visibleFrame.maxY - size.height
         }
 
         let win = PeekNSWindow(
-            contentRect: NSRect(origin: origin, size: peekSize),
+            contentRect: NSRect(origin: origin, size: size),
             styleMask: [.borderless],
             backing: .buffered, defer: false
         )
@@ -312,7 +400,6 @@ final class CascadeModel: ObservableObject {
         win.isReleasedWhenClosed = false
         win.collectionBehavior = [.transient, .ignoresCycle]
 
-        let content = LevelListView(level: level, model: self)
         let hc = NSHostingController(rootView: content)
         hc.view.wantsLayer = true
         hc.view.layer?.cornerRadius = 10
@@ -322,9 +409,53 @@ final class CascadeModel: ObservableObject {
         hc.view.layer?.borderColor = NSColor.separatorColor.cgColor
 
         win.contentView = hc.view
-        win.setFrame(NSRect(origin: origin, size: peekSize), display: true)
+        win.setFrame(NSRect(origin: origin, size: size), display: true)
         win.orderFront(nil)
         peekWindows[level] = win
+    }
+
+    /// Aspect-sized preview window sizing.
+    /// - Images: load NSImage and fit into a 280...800 × 200...700 bounding box.
+    /// - PDFs: first page bounds, same clamp.
+    /// - Text/Markdown: fixed 520 × 600.
+    static func previewSize(for url: URL, kind: PreviewKind) -> NSSize {
+        let minW: CGFloat = 280, maxW: CGFloat = 800
+        let minH: CGFloat = 200, maxH: CGFloat = 700
+        let chromeH: CGFloat = 34  // header
+
+        switch kind {
+        case .image:
+            if let img = NSImage(contentsOf: url), img.size.width > 0, img.size.height > 0 {
+                let size = fit(aspect: img.size, minW: minW, maxW: maxW, minH: minH, maxH: maxH - chromeH)
+                return NSSize(width: size.width, height: size.height + chromeH)
+            }
+            return NSSize(width: 520, height: 400)
+        case .pdf:
+            if let doc = PDFDocument(url: url), let page = doc.page(at: 0) {
+                let bounds = page.bounds(for: .mediaBox)
+                let size = fit(aspect: bounds.size, minW: minW, maxW: maxW, minH: minH, maxH: maxH - chromeH)
+                return NSSize(width: size.width, height: size.height + chromeH)
+            }
+            return NSSize(width: 520, height: 600)
+        case .markdown, .text:
+            return NSSize(width: 520, height: 600)
+        case .quicklook:
+            // Roughly letter-paper aspect — fits docx/pages/epub nicely.
+            return NSSize(width: 640, height: 780)
+        }
+    }
+
+    private static func fit(aspect: NSSize, minW: CGFloat, maxW: CGFloat, minH: CGFloat, maxH: CGFloat) -> NSSize {
+        let ratio = aspect.width / aspect.height
+        // Start at maxW, derive height.
+        var w = maxW
+        var h = w / ratio
+        if h > maxH { h = maxH; w = h * ratio }
+        if w < minW { w = minW; h = w / ratio }
+        if h < minH { h = minH; w = h * ratio }
+        w = min(max(w, minW), maxW)
+        h = min(max(h, minH), maxH)
+        return NSSize(width: w, height: h)
     }
 
     private func scheduleClose(deeperThan level: Int) {

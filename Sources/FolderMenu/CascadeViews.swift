@@ -33,7 +33,7 @@ struct LevelListView: View {
                 Image(systemName: "folder.fill")
                     .foregroundStyle(.secondary)
                     .font(.system(size: 12))
-                Text(state?.folder?.lastPathComponent ?? "")
+                Text(state?.source?.lastPathComponent ?? "")
                     .font(.system(size: 13, weight: .semibold))
                     .lineLimit(1)
                     .truncationMode(.middle)

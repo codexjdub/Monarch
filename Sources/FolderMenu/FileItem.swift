@@ -1,6 +1,50 @@
 import AppKit
 import UniformTypeIdentifiers
 
+/// A previewable file kind. Files with a non-nil previewKind open a preview
+/// peek to the right (same hover/keyboard mechanics as folder peeks).
+enum PreviewKind {
+    case image
+    case pdf
+    case markdown
+    case text
+    /// Rich document formats rendered via QLPreviewView (docx, epub, pages,
+    /// numbers, keynote, rtf, odt, webarchive, legacy Office, etc.).
+    case quicklook
+}
+
+private let imageExts: Set<String> = [
+    "jpg", "jpeg", "png", "gif", "heic", "heif", "tiff", "tif", "bmp", "webp"
+]
+private let markdownExts: Set<String> = ["md", "markdown", "mdown"]
+private let textExts: Set<String> = [
+    "txt", "text", "log", "csv", "tsv",
+    "swift", "py", "rb", "js", "mjs", "cjs", "ts", "tsx", "jsx",
+    "json", "yaml", "yml", "toml", "ini", "conf", "cfg",
+    "xml", "html", "htm", "css", "scss", "sass",
+    "sh", "bash", "zsh", "fish",
+    "c", "h", "cpp", "hpp", "cc", "m", "mm",
+    "go", "rs", "java", "kt", "kts", "scala",
+    "pl", "lua", "php", "sql",
+    "plist", "entitlements", "strings",
+    "env", "gitignore", "gitconfig", "dockerignore",
+    "srt", "vtt"
+]
+private let quicklookExts: Set<String> = [
+    // Office Open XML
+    "docx", "xlsx", "pptx",
+    // Legacy Office
+    "doc", "xls", "ppt",
+    // Apple iWork
+    "pages", "numbers", "key",
+    // OpenDocument
+    "odt", "ods", "odp",
+    // Rich text / archives
+    "rtf", "rtfd", "webarchive",
+    // eBooks
+    "epub"
+]
+
 struct FileItem: Identifiable, Hashable {
     let id = UUID()
     let url: URL
@@ -24,6 +68,20 @@ struct FileItem: Identifiable, Hashable {
               let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize
         else { return nil }
         return ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)
+    }
+
+    /// Non-nil if this file can be previewed in a peek pane. Folders never preview
+    /// (they open a folder peek instead).
+    var previewKind: PreviewKind? {
+        guard !isDirectory else { return nil }
+        let ext = url.pathExtension.lowercased()
+        if ext.isEmpty { return nil }
+        if imageExts.contains(ext)     { return .image }
+        if ext == "pdf"                { return .pdf }
+        if markdownExts.contains(ext)  { return .markdown }
+        if textExts.contains(ext)      { return .text }
+        if quicklookExts.contains(ext) { return .quicklook }
+        return nil
     }
 
     var imageDimensions: String? {

@@ -12,7 +12,8 @@ let package = Package(
                 .linkedFramework("QuickLookUI"),
                 .linkedFramework("CoreServices"),
                 .linkedFramework("Carbon"),
-                .linkedFramework("ServiceManagement")
+                .linkedFramework("ServiceManagement"),
+                .linkedFramework("PDFKit")
             ]
         )
     ]
