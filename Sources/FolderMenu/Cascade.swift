@@ -53,8 +53,14 @@ final class CascadeModel: ObservableObject {
     /// A level renders one of two things: a folder's contents (list of rows),
     /// or a file preview (image / PDF / markdown / text).
     enum Content {
-        case folder(items: [FileItem], rowFrames: [Int: NSRect])
+        case folder(items: [FileItem], sections: [Section], rowFrames: [Int: NSRect])
         case preview(kind: PreviewKind, url: URL)
+    }
+
+    /// A named section in a folder level. Indices refer to the flat `items` array.
+    struct Section: Hashable {
+        let title: String
+        let range: Range<Int>
     }
 
     struct Level {
@@ -67,24 +73,28 @@ final class CascadeModel: ObservableObject {
 
         // Convenience accessors (return empty for preview levels).
         var items: [FileItem] {
-            if case .folder(let items, _) = content { return items }
+            if case .folder(let items, _, _) = content { return items }
+            return []
+        }
+        var sections: [Section] {
+            if case .folder(_, let secs, _) = content { return secs }
             return []
         }
         var rowFrames: [Int: NSRect] {
-            if case .folder(_, let frames) = content { return frames }
+            if case .folder(_, _, let frames) = content { return frames }
             return [:]
         }
-        /// For .folder levels, swap in a new items array without touching frames.
-        mutating func setItems(_ newItems: [FileItem]) {
-            if case .folder(_, let frames) = content {
-                content = .folder(items: newItems, rowFrames: frames)
+        /// For .folder levels, swap in new items + sections without touching frames.
+        mutating func setContents(_ newItems: [FileItem], _ newSections: [Section]) {
+            if case .folder(_, _, let frames) = content {
+                content = .folder(items: newItems, sections: newSections, rowFrames: frames)
             }
         }
         /// For .folder levels, record a row's screen frame.
         mutating func setRowFrame(_ index: Int, _ frame: NSRect) {
-            if case .folder(let items, var frames) = content {
+            if case .folder(let items, let secs, var frames) = content {
                 frames[index] = frame
-                content = .folder(items: items, rowFrames: frames)
+                content = .folder(items: items, sections: secs, rowFrames: frames)
             }
         }
         var isPreview: Bool {
@@ -104,6 +114,7 @@ final class CascadeModel: ObservableObject {
     // Collaborators
     private let folderStore: FolderStore
     private var storeSub: AnyCancellable?
+    private var pinObs: NSObjectProtocol?
     let onDismiss: () -> Void
 
     // Peek window registry (levels 1+). Level 0 is the NSPopover, not owned here.
@@ -130,14 +141,27 @@ final class CascadeModel: ObservableObject {
         storeSub = folderStore.$folders
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.rebuildLevel0() }
+        pinObs = NotificationCenter.default.addObserver(
+            forName: .folderMenuPinsChanged, object: nil, queue: .main
+        ) { [weak self] note in
+            guard let folder = note.object as? URL else { return }
+            Task { @MainActor in self?.pinsChanged(folder: folder) }
+        }
+    }
+
+    private func pinsChanged(folder: URL) {
+        for i in 1..<levels.count {
+            guard case .folder = levels[i].content, levels[i].source == folder else { continue }
+            reloadLevelPreservingFocus(i)
+        }
     }
 
     private func rebuildLevel0() {
         let items = folderStore.folders.map { FileItem(url: $0) }
         if levels.isEmpty {
-            levels = [Level(source: nil, content: .folder(items: items, rowFrames: [:]))]
+            levels = [Level(source: nil, content: .folder(items: items, sections: [], rowFrames: [:]))]
         } else {
-            levels[0].setItems(items)
+            levels[0].setContents(items, [])
         }
         // Level 0's "items" are the configured root folders. Watch each so
         // that e.g. adding a file inside a root refreshes that root's tree
@@ -214,8 +238,9 @@ final class CascadeModel: ObservableObject {
         }()
 
         // Reload.
-        let newItems = CascadeModel.loadFolder(src)
-        levels[level].setItems(newItems)
+        let result = CascadeModel.loadFolder(src)
+        let newItems = result.items
+        levels[level].setContents(result.items, result.sections)
 
         // Restore focus.
         if let focusedURL, let newIdx = newItems.firstIndex(where: { $0.url == focusedURL }) {
@@ -239,7 +264,8 @@ final class CascadeModel: ObservableObject {
         rebuildLevel0()
         for i in 1..<levels.count {
             guard case .folder = levels[i].content, let f = levels[i].source else { continue }
-            levels[i].setItems(CascadeModel.loadFolder(f))
+            let result = CascadeModel.loadFolder(f)
+            levels[i].setContents(result.items, result.sections)
         }
     }
 
@@ -428,8 +454,8 @@ final class CascadeModel: ObservableObject {
         // Close any existing peek at this level and deeper; we're replacing.
         closePeeks(atLevelsGreaterThan: level - 1)
 
-        let items = CascadeModel.loadFolder(folder)
-        let state = Level(source: folder, content: .folder(items: items, rowFrames: [:]))
+        let result = CascadeModel.loadFolder(folder)
+        let state = Level(source: folder, content: .folder(items: result.items, sections: result.sections, rowFrames: [:]))
         if levels.count == level {
             levels.append(state)
         } else if levels.count > level {
@@ -625,7 +651,12 @@ final class CascadeModel: ObservableObject {
 
     // MARK: - Folder loading
 
-    static func loadFolder(_ folder: URL) -> [FileItem] {
+    struct FolderContents {
+        let items: [FileItem]
+        let sections: [Section]
+    }
+
+    static func loadFolder(_ folder: URL) -> FolderContents {
         let fm = FileManager.default
         let keys: [URLResourceKey] = [.isDirectoryKey, .fileSizeKey,
                                       .contentModificationDateKey, .creationDateKey]
@@ -634,10 +665,10 @@ final class CascadeModel: ObservableObject {
                                                     options: [])) ?? []
         let sortOrder  = FileSortOrder(rawValue: UserDefaults.standard.string(forKey: "sortOrder") ?? "") ?? .name
         let showHidden = UserDefaults.standard.bool(forKey: "showHiddenFiles")
-        // Default direction per sort mode: name/type ascending, dates descending (newest first).
         let defaultDescending: Bool = (sortOrder == .dateModified || sortOrder == .dateCreated)
         let descending = UserDefaults.standard.object(forKey: "sortDescending") as? Bool ?? defaultDescending
-        return contents
+
+        let allSorted = contents
             .map { FileItem(url: $0) }
             .filter { showHidden || !$0.isHidden }
             .sorted { a, b in
@@ -661,6 +692,61 @@ final class CascadeModel: ObservableObject {
                 }
                 return descending ? !ascending : ascending
             }
+
+        // Build sections: Pinned, Recent, All.
+        let pinnedURLs = PinStore.shared.pinned(in: folder)
+        let pinnedSet = Set(pinnedURLs.map(\.path))
+        let pinnedItems = pinnedURLs.compactMap { url in
+            allSorted.first(where: { $0.url == url })
+        }
+
+        // Recent: top 5 non-pinned files by modification date (skip dirs).
+        let recentCount = 5
+        let recentCandidates = allSorted
+            .filter { !$0.isDirectory && !pinnedSet.contains($0.url.path) }
+            .sorted { a, b in
+                let ad = (try? a.url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+                let bd = (try? b.url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+                return ad > bd
+            }
+        let recentItems: [FileItem]
+        // Show Recent only when the folder has enough items to make it useful.
+        if allSorted.count >= 10, recentCandidates.count >= 3 {
+            recentItems = Array(recentCandidates.prefix(recentCount))
+        } else {
+            recentItems = []
+        }
+        let recentSet = Set(recentItems.map(\.url.path))
+
+        // All — minus pinned and recent (they already appear above).
+        let remainingItems = allSorted.filter {
+            !pinnedSet.contains($0.url.path) && !recentSet.contains($0.url.path)
+        }
+
+        // No sections needed if there are no pins and no recent.
+        if pinnedItems.isEmpty && recentItems.isEmpty {
+            return FolderContents(items: allSorted, sections: [])
+        }
+
+        // Compose flat item list and build section descriptors.
+        var items: [FileItem] = []
+        var sections: [Section] = []
+
+        if !pinnedItems.isEmpty {
+            let start = items.count
+            items.append(contentsOf: pinnedItems)
+            sections.append(Section(title: "Pinned", range: start..<items.count))
+        }
+        if !recentItems.isEmpty {
+            let start = items.count
+            items.append(contentsOf: recentItems)
+            sections.append(Section(title: "Recent", range: start..<items.count))
+        }
+        let start = items.count
+        items.append(contentsOf: remainingItems)
+        sections.append(Section(title: "All", range: start..<items.count))
+
+        return FolderContents(items: items, sections: sections)
     }
 }
 

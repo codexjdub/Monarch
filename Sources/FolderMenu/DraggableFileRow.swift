@@ -116,6 +116,7 @@ class DraggableNSView: NSView, NSDraggingSource {
     var fileItem: FileItem?
     var onTap: (() -> Void)?
     var selectionState: SelectionState?
+    var parentFolder: URL?
     var removeFromRootHandler: (() -> Void)?
 
     private var mouseDownEvent: NSEvent?
@@ -310,6 +311,17 @@ class DraggableNSView: NSView, NSDraggingSource {
             menu.addItem(withTitle: "Copy Dimensions (\(dims))", action: #selector(copyDimensions), keyEquivalent: "").target = self
         }
 
+        // Pin / Unpin (only in folder levels, not level 0 roots).
+        if urlsToAct.count == 1, let folder = parentFolder {
+            let pinned = PinStore.shared.isPinned(item.url, in: folder)
+            let pinItem = menu.addItem(
+                withTitle: pinned ? "Unpin" : "Pin to Top",
+                action: #selector(togglePin),
+                keyEquivalent: ""
+            )
+            pinItem.target = self
+        }
+
         menu.addItem(.separator())
         let trashTitle = urlsToAct.count > 1 ? "Move \(urlsToAct.count) Items to Trash" : "Move to Trash"
         let trashItem = menu.addItem(withTitle: trashTitle, action: #selector(moveToTrash), keyEquivalent: "\u{8}") // backspace
@@ -430,6 +442,11 @@ class DraggableNSView: NSView, NSDraggingSource {
         return [item.url]
     }
 
+    @objc private func togglePin() {
+        guard let item = fileItem, let folder = parentFolder else { return }
+        PinStore.shared.togglePin(item.url, in: folder)
+    }
+
     @objc private func copyDimensions() {
         guard let dims = fileItem?.imageDimensions else { return }
         NSPasteboard.general.clearContents()
@@ -449,6 +466,7 @@ struct DraggableFileRow: NSViewRepresentable {
     @ObservedObject var selectionState: SelectionState
     var isFocused: Bool = false
     var isOnPath: Bool = false
+    var parentFolder: URL? = nil
     var removeFromRootHandler: (() -> Void)? = nil
 
     func makeNSView(context: Context) -> DraggableNSView {
@@ -456,6 +474,7 @@ struct DraggableFileRow: NSViewRepresentable {
         view.fileItem = item
         view.onTap = onTap
         view.selectionState = selectionState
+        view.parentFolder = parentFolder
         view.removeFromRootHandler = removeFromRootHandler
 
         let hosting = NSHostingView(rootView: makeContent())
@@ -474,6 +493,7 @@ struct DraggableFileRow: NSViewRepresentable {
         nsView.fileItem = item
         nsView.onTap = onTap
         nsView.selectionState = selectionState
+        nsView.parentFolder = parentFolder
         nsView.removeFromRootHandler = removeFromRootHandler
         if let hosting = nsView.subviews.first as? NSHostingView<FileRowContent> {
             hosting.rootView = makeContent()

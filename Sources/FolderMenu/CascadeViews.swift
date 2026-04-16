@@ -9,7 +9,6 @@ import AppKit
 struct LevelListView: View {
     let level: Int
     @ObservedObject var model: CascadeModel
-    @StateObject private var selectionState = SelectionState()
 
     private var state: CascadeModel.Level? {
         model.levels.indices.contains(level) ? model.levels[level] : nil
@@ -54,40 +53,10 @@ struct LevelListView: View {
                 }
                 Spacer()
             } else {
-                ScrollViewReader { sp in
-                    ScrollView {
-                        LazyVStack(spacing: 0) {
-                            ForEach(Array(state.items.enumerated()), id: \.element.id) { idx, item in
-                                DraggableFileRow(
-                                    item: item,
-                                    onTap: { model.clickRow(level: level, index: idx) },
-                                    selectionState: selectionState,
-                                    isFocused: model.focus.level == level && model.focus.index == idx,
-                                    isOnPath: model.pathIndices[level] == idx
-                                        && level + 1 < model.levels.count,
-                                    removeFromRootHandler: level == 0 ? { removeRoot(item.url) } : nil
-                                )
-                                .frame(height: 34)
-                                .id(item.id)
-                                .background(RowFrameReporter(level: level, index: idx, model: model))
-                            }
-                        }
-                    }
-                    .onChange(of: model.focus) { f in
-                        guard f.level == level,
-                              state.items.indices.contains(f.index) else { return }
-                        withAnimation(.none) {
-                            sp.scrollTo(state.items[f.index].id, anchor: .center)
-                        }
-                    }
-                }
+                // Reuse LevelListBody's section-aware rendering for peek lists.
+                LevelListBody(level: level, model: model)
             }
         }
-    }
-
-    private func removeRoot(_ url: URL) {
-        // Reach back to the store via a notification — decoupled from the model.
-        NotificationCenter.default.post(name: .folderMenuRemoveRoot, object: url)
     }
 }
 
@@ -245,21 +214,14 @@ struct LevelListBody: View {
                     ScrollViewReader { sp in
                         ScrollView {
                             LazyVStack(spacing: 0) {
-                                ForEach(Array(state.items.enumerated()), id: \.element.id) { idx, item in
-                                    DraggableFileRow(
-                                        item: item,
-                                        onTap: { model.clickRow(level: level, index: idx) },
-                                        selectionState: selectionState,
-                                        isFocused: model.focus.level == level && model.focus.index == idx,
-                                        isOnPath: model.pathIndices[level] == idx
-                                            && level + 1 < model.levels.count,
-                                        removeFromRootHandler: level == 0
-                                            ? { NotificationCenter.default.post(name: .folderMenuRemoveRoot, object: item.url) }
-                                            : nil
-                                    )
-                                    .frame(height: 34)
-                                    .id(item.id)
-                                    .background(RowFrameReporter(level: level, index: idx, model: model))
+                                if state.sections.isEmpty {
+                                    // Flat list — no section headers.
+                                    rowsView(state: state, range: state.items.indices)
+                                } else {
+                                    ForEach(state.sections, id: \.self) { sec in
+                                        sectionHeader(sec.title)
+                                        rowsView(state: state, range: sec.range)
+                                    }
                                 }
                             }
                         }
@@ -276,6 +238,42 @@ struct LevelListBody: View {
         }
         .background(Color(NSColor.windowBackgroundColor))
         .background(WindowMouseTracker(level: level, model: model))
+    }
+
+    @ViewBuilder
+    private func sectionHeader(_ title: String) -> some View {
+        HStack {
+            Text(title)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.tertiary)
+                .textCase(.uppercase)
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 8)
+        .padding(.bottom, 2)
+    }
+
+    @ViewBuilder
+    private func rowsView(state: CascadeModel.Level, range: Range<Int>) -> some View {
+        ForEach(range, id: \.self) { idx in
+            let item = state.items[idx]
+            DraggableFileRow(
+                item: item,
+                onTap: { model.clickRow(level: level, index: idx) },
+                selectionState: selectionState,
+                isFocused: model.focus.level == level && model.focus.index == idx,
+                isOnPath: model.pathIndices[level] == idx
+                    && level + 1 < model.levels.count,
+                parentFolder: state.source,
+                removeFromRootHandler: level == 0
+                    ? { NotificationCenter.default.post(name: .folderMenuRemoveRoot, object: item.url) }
+                    : nil
+            )
+            .frame(height: 34)
+            .id(item.id)
+            .background(RowFrameReporter(level: level, index: idx, model: model))
+        }
     }
 }
 
