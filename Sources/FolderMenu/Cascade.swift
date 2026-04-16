@@ -597,6 +597,17 @@ final class CascadeModel: ObservableObject {
         }
     }
 
+    /// Click on a breadcrumb segment: collapse the cascade to that level
+    /// and focus the parent's on-path row (so the user sees where they are).
+    func jumpToBreadcrumb(level: Int) {
+        closeDeeperThan(level)
+        if let idx = pathIndices[level] {
+            focus = Focus(level: level, index: idx)
+        } else {
+            focus = Focus(level: level, index: 0)
+        }
+    }
+
     func closeAll() {
         pendingOpen?.cancel(); pendingOpen = nil
         pendingClose?.cancel(); pendingClose = nil

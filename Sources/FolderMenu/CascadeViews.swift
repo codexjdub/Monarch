@@ -26,22 +26,18 @@ struct LevelListView: View {
     }
 
     @ViewBuilder private var header: some View {
-        HStack(spacing: 6) {
-            if level == 0 {
+        if level == 0 {
+            HStack {
                 Text("FolderMenu").font(.headline)
-            } else {
-                Image(systemName: "folder.fill")
-                    .foregroundStyle(.secondary)
-                    .font(.system(size: 12))
-                Text(state?.source?.lastPathComponent ?? "")
-                    .font(.system(size: 13, weight: .semibold))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                Spacer()
             }
-            Spacer()
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+        } else {
+            BreadcrumbView(model: model, currentLevel: level)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
     }
 
     @ViewBuilder private var listBody: some View {
@@ -97,6 +93,77 @@ struct LevelListView: View {
 
 extension Notification.Name {
     static let folderMenuRemoveRoot = Notification.Name("FolderMenuRemoveRoot")
+}
+
+// MARK: - Breadcrumb
+//
+// Renders "Root › Sub › Sub › Current" across the top of a peek window.
+// Non-current segments are clickable; clicking one collapses the cascade
+// back to that level. Overflow scrolls horizontally.
+
+struct BreadcrumbView: View {
+    @ObservedObject var model: CascadeModel
+    let currentLevel: Int
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 4) {
+                ForEach(segments, id: \.level) { seg in
+                    if seg.level != segments.first?.level {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                    segmentLabel(seg)
+                }
+            }
+            .padding(.trailing, 4)
+        }
+    }
+
+    private struct Segment: Hashable {
+        let level: Int
+        let name: String
+    }
+
+    private var segments: [Segment] {
+        // Levels 1...currentLevel. Each segment shows that level's source
+        // folder name. Skips level 0 (the configured-roots list).
+        var out: [Segment] = []
+        for l in 1...currentLevel {
+            guard model.levels.indices.contains(l),
+                  let src = model.levels[l].source else { continue }
+            out.append(Segment(level: l, name: src.lastPathComponent))
+        }
+        return out
+    }
+
+    @ViewBuilder
+    private func segmentLabel(_ seg: Segment) -> some View {
+        if seg.level == currentLevel {
+            HStack(spacing: 4) {
+                Image(systemName: "folder.fill")
+                    .foregroundStyle(.secondary)
+                    .font(.system(size: 11))
+                Text(seg.name)
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1)
+            }
+        } else {
+            Button {
+                model.jumpToBreadcrumb(level: seg.level)
+            } label: {
+                Text(seg.name)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .buttonStyle(.plain)
+            .onHover { inside in
+                if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+            }
+        }
+    }
 }
 
 // MARK: - Cascade Root View
