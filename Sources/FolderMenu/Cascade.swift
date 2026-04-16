@@ -110,6 +110,9 @@ final class CascadeModel: ObservableObject {
     private var peekWindows: [Int: PeekNSWindow] = [:]
     private let peekSize = NSSize(width: 320, height: 440)
 
+    // FSEvents watchers, one per .folder level (including level 0 roots).
+    private var watchers: [Int: [FolderWatcher]] = [:]
+
     // Timing
     static let mouseOpenDelay:    TimeInterval = 0.12
     static let mouseReplaceDelay: TimeInterval = 0.06
@@ -135,6 +138,100 @@ final class CascadeModel: ObservableObject {
             levels = [Level(source: nil, content: .folder(items: items, rowFrames: [:]))]
         } else {
             levels[0].setItems(items)
+        }
+        // Level 0's "items" are the configured root folders. Watch each so
+        // that e.g. adding a file inside a root refreshes that root's tree
+        // when/if the user drills in. We also watch level 0 itself so if a
+        // root folder is deleted on disk we notice (FolderStore separately).
+        installWatchersForLevel0()
+    }
+
+    private func installWatchersForLevel0() {
+        var ws: [FolderWatcher] = []
+        for root in folderStore.folders {
+            ws.append(FolderWatcher(url: root) { [weak self] in
+                self?.folderDidChange(url: root)
+            })
+        }
+        watchers[0] = ws
+    }
+
+    private func installWatcher(forLevel level: Int, url: URL) {
+        watchers[level] = [
+            FolderWatcher(url: url) { [weak self] in
+                self?.folderDidChange(url: url)
+            }
+        ]
+    }
+
+    private func removeWatchers(forLevel level: Int) {
+        watchers[level] = nil
+    }
+
+    /// FSEvents fired for `url`. Reload any .folder levels whose source
+    /// matches, preserving focus and path by URL (not index).
+    private func folderDidChange(url: URL) {
+        for i in 0..<levels.count {
+            guard case .folder = levels[i].content else { continue }
+            let matches: Bool
+            if i == 0 {
+                // Level 0's source is nil; we update it only if the changed
+                // URL is one of its configured roots, since level 0 is the
+                // root list, not a folder listing.
+                matches = folderStore.folders.contains(url)
+                if matches {
+                    // Root's own contents changed, but level 0 shows the
+                    // *list of roots* — that comes from folderStore, not
+                    // disk. Nothing to reload for level 0 here.
+                    continue
+                }
+            } else {
+                matches = (levels[i].source == url)
+            }
+            if matches {
+                reloadLevelPreservingFocus(i)
+            }
+        }
+    }
+
+    private func reloadLevelPreservingFocus(_ level: Int) {
+        guard levels.indices.contains(level),
+              case .folder = levels[level].content,
+              let src = levels[level].source else { return }
+
+        // Snapshot URLs we want to keep focused / on-path.
+        let focusedURL: URL? = {
+            if focus.level == level, levels[level].items.indices.contains(focus.index) {
+                return levels[level].items[focus.index].url
+            }
+            return nil
+        }()
+        let pathURL: URL? = {
+            if let idx = pathIndices[level], levels[level].items.indices.contains(idx) {
+                return levels[level].items[idx].url
+            }
+            return nil
+        }()
+
+        // Reload.
+        let newItems = CascadeModel.loadFolder(src)
+        levels[level].setItems(newItems)
+
+        // Restore focus.
+        if let focusedURL, let newIdx = newItems.firstIndex(where: { $0.url == focusedURL }) {
+            focus = Focus(level: level, index: newIdx)
+        } else if focus.level == level {
+            focus = Focus(level: level, index: min(focus.index, max(newItems.count - 1, -1)))
+        }
+
+        // Restore path index — if the on-path child URL is gone, close its peek.
+        if let pathURL {
+            if let newIdx = newItems.firstIndex(where: { $0.url == pathURL }) {
+                pathIndices[level] = newIdx
+            } else {
+                pathIndices[level] = nil
+                closeDeeperThan(level)
+            }
         }
     }
 
@@ -344,6 +441,7 @@ final class CascadeModel: ObservableObject {
             return
         }
         pathIndices[level - 1] = parentIndex
+        installWatcher(forLevel: level, url: folder)
 
         let content = AnyView(LevelListView(level: level, model: self))
         presentPeek(atLevel: level, parentIndex: parentIndex, size: peekSize, content: content)
@@ -488,6 +586,7 @@ final class CascadeModel: ObservableObject {
         for l in ls {
             peekWindows[l]?.close()
             peekWindows[l] = nil
+            removeWatchers(forLevel: l)
         }
         // Trim model levels beyond minLevel (keep levels[0...minLevel]).
         if levels.count > minLevel + 1 {
