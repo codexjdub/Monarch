@@ -15,6 +15,41 @@ class SelectionState: ObservableObject {
     func isSelected(_ url: URL) -> Bool { selectedURLs.contains(url) }
 }
 
+// MARK: - Row icon (tries QL thumbnail, falls back to NSWorkspace icon)
+
+struct RowIconView: View {
+    let item: FileItem
+    @State private var thumbnail: NSImage?
+
+    var body: some View {
+        Image(nsImage: thumbnail ?? item.icon)
+            .resizable()
+            .interpolation(.medium)
+            .aspectRatio(contentMode: .fit)
+            .onAppear(perform: load)
+            .onChange(of: item.url) { _ in
+                thumbnail = nil
+                load()
+            }
+    }
+
+    private func load() {
+        // Only request thumbnails for previewable files — everything else
+        // would just produce the generic icon we're already showing.
+        guard !item.isDirectory, item.previewKind != nil else { return }
+        if let cached = ThumbnailCache.shared.cached(for: item.url) {
+            thumbnail = cached
+            return
+        }
+        let url = item.url
+        ThumbnailCache.shared.thumbnail(for: url) { img in
+            // Guard against row reuse: only accept the image if our URL
+            // hasn't changed.
+            if item.url == url { self.thumbnail = img }
+        }
+    }
+}
+
 // MARK: - Row content (pure visual; highlights from props only)
 
 struct FileRowContent: View {
@@ -34,8 +69,7 @@ struct FileRowContent: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(nsImage: item.icon)
-                .resizable()
+            RowIconView(item: item)
                 .frame(width: 20, height: 20)
 
             VStack(alignment: .leading, spacing: 1) {
