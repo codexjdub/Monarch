@@ -442,6 +442,10 @@ final class CascadeModel: ObservableObject {
         case .quicklook:
             // Roughly letter-paper aspect — fits docx/pages/epub nicely.
             return NSSize(width: 640, height: 780)
+        case .video:
+            return NSSize(width: 720, height: 480)
+        case .audio:
+            return NSSize(width: 480, height: 140)
         }
     }
 

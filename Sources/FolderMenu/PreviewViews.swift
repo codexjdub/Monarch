@@ -48,6 +48,8 @@ struct PreviewLevelView: View {
         case .markdown:  return "text.alignleft"
         case .text:      return "doc.text"
         case .quicklook: return "doc"
+        case .video:     return "film"
+        case .audio:     return "waveform"
         }
     }
 
@@ -58,6 +60,8 @@ struct PreviewLevelView: View {
         case .markdown:  TextPreviewView(url: url)
         case .text:      TextPreviewView(url: url)
         case .quicklook: QuickLookPreviewView(url: url)
+        case .video:     QuickLookPreviewView(url: url)
+        case .audio:     QuickLookPreviewView(url: url)
         }
     }
 }

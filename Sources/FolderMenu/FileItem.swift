@@ -8,9 +8,14 @@ enum PreviewKind {
     case pdf
     case markdown
     case text
-    /// Rich document formats rendered via QLPreviewView (docx, epub, pages,
-    /// numbers, keynote, rtf, odt, webarchive, legacy Office, etc.).
+    /// Rich document and misc formats rendered via QLPreviewView (docx, epub,
+    /// pages, numbers, keynote, rtf, odt, webarchive, svg, raw photos, fonts,
+    /// 3D models, archives, etc.).
     case quicklook
+    /// Video via QLPreviewView (gets a playable scrubber).
+    case video
+    /// Audio via QLPreviewView (play/scrub UI).
+    case audio
 }
 
 private let imageExts: Set<String> = [
@@ -42,7 +47,25 @@ private let quicklookExts: Set<String> = [
     // Rich text / archives
     "rtf", "rtfd", "webarchive",
     // eBooks
-    "epub"
+    "epub",
+    // Vector / misc images
+    "svg", "ico", "icns",
+    // Raw photos
+    "cr2", "cr3", "nef", "arw", "dng", "raf", "orf", "rw2", "pef", "srw",
+    // Fonts
+    "ttf", "otf", "ttc", "woff", "woff2",
+    // 3D
+    "usdz", "usd", "usda", "usdc", "obj", "stl", "dae",
+    // Notebooks (rendered as JSON text by QL; good enough)
+    "ipynb",
+    // Archives (QL shows file listing / metadata)
+    "zip", "tar", "gz", "tgz", "bz2", "7z", "rar", "xz"
+]
+private let videoExts: Set<String> = [
+    "mp4", "m4v", "mov", "avi", "mkv", "webm", "mpg", "mpeg", "3gp", "ogv", "wmv", "flv"
+]
+private let audioExts: Set<String> = [
+    "mp3", "m4a", "aac", "wav", "aiff", "aif", "flac", "ogg", "oga", "opus", "wma"
 ]
 
 struct FileItem: Identifiable, Hashable {
@@ -80,6 +103,8 @@ struct FileItem: Identifiable, Hashable {
         if ext == "pdf"                { return .pdf }
         if markdownExts.contains(ext)  { return .markdown }
         if textExts.contains(ext)      { return .text }
+        if videoExts.contains(ext)     { return .video }
+        if audioExts.contains(ext)     { return .audio }
         if quicklookExts.contains(ext) { return .quicklook }
         return nil
     }
