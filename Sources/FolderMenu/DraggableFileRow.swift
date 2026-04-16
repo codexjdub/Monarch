@@ -163,6 +163,11 @@ class DraggableNSView: NSView, NSDraggingSource {
         let openTitle = urlsToAct.count > 1 ? "Open \(urlsToAct.count) Items" : "Open"
         menu.addItem(withTitle: openTitle, action: #selector(openFiles), keyEquivalent: "").target = self
 
+        // Quick Look — single file only (directories fall back to Finder).
+        if urlsToAct.count == 1, !item.isDirectory {
+            menu.addItem(withTitle: "Quick Look", action: #selector(showQuickLook), keyEquivalent: " ").target = self
+        }
+
         if urlsToAct.count == 1 {
             menu.addItem(withTitle: "Show in Finder", action: #selector(showInFinder), keyEquivalent: "").target = self
 
@@ -174,11 +179,31 @@ class DraggableNSView: NSView, NSDraggingSource {
         }
 
         menu.addItem(.separator())
+
+        // Share… — system-provided submenu (AirDrop, Mail, Messages, …).
+        if !urlsToAct.isEmpty {
+            let picker = NSSharingServicePicker(items: urlsToAct)
+            let shareItem = picker.standardShareMenuItem
+            menu.addItem(shareItem)
+            menu.addItem(.separator())
+        }
+
+        let copyTitle = urlsToAct.count > 1 ? "Copy \(urlsToAct.count) Items" : "Copy"
+        menu.addItem(withTitle: copyTitle, action: #selector(copyFiles), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Copy Path", action: #selector(copyPath), keyEquivalent: "").target = self
+        if urlsToAct.count == 1 {
+            menu.addItem(withTitle: "Copy Name", action: #selector(copyName), keyEquivalent: "").target = self
+        }
 
         if urlsToAct.count == 1, let dims = item.imageDimensions {
             menu.addItem(withTitle: "Copy Dimensions (\(dims))", action: #selector(copyDimensions), keyEquivalent: "").target = self
         }
+
+        menu.addItem(.separator())
+        let trashTitle = urlsToAct.count > 1 ? "Move \(urlsToAct.count) Items to Trash" : "Move to Trash"
+        let trashItem = menu.addItem(withTitle: trashTitle, action: #selector(moveToTrash), keyEquivalent: "\u{8}") // backspace
+        trashItem.keyEquivalentModifierMask = [.command]
+        trashItem.target = self
 
         // Root-folder rows get a "Remove from FolderMenu" item.
         if removeFromRootHandler != nil {
@@ -190,6 +215,7 @@ class DraggableNSView: NSView, NSDraggingSource {
 
         NSMenu.popUpContextMenu(menu, with: event, for: self)
     }
+
 
     // MARK: Actions
 
@@ -256,6 +282,41 @@ class DraggableNSView: NSView, NSDraggingSource {
         guard let url = fileItem?.url else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(url.path, forType: .string)
+    }
+
+    @objc private func copyName() {
+        guard let url = fileItem?.url else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(url.lastPathComponent, forType: .string)
+    }
+
+    @objc private func copyFiles() {
+        let urls = currentActionURLs()
+        guard !urls.isEmpty else { return }
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.writeObjects(urls.map { $0 as NSURL })
+    }
+
+    @objc private func moveToTrash() {
+        let urls = currentActionURLs()
+        guard !urls.isEmpty else { return }
+        NSWorkspace.shared.recycle(urls, completionHandler: nil)
+    }
+
+    @objc private func showQuickLook() {
+        guard let url = fileItem?.url, !url.hasDirectoryPath else { return }
+        QuickLookManager.shared.show(urls: [url])
+    }
+
+    /// URLs the context menu should act on: the multi-selection if this row
+    /// is part of it, otherwise just this row's URL.
+    private func currentActionURLs() -> [URL] {
+        guard let item = fileItem else { return [] }
+        if let sel = selectionState, sel.isSelected(item.url), sel.selectedURLs.count > 1 {
+            return Array(sel.selectedURLs)
+        }
+        return [item.url]
     }
 
     @objc private func copyDimensions() {

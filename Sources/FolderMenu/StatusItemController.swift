@@ -211,6 +211,14 @@ class StatusItemController: NSObject {
             item.state = currentSort == order.rawValue ? .on : .off
             sortMenu.addItem(item)
         }
+        sortMenu.addItem(.separator())
+        let defaultDescending = (currentSort == FileSortOrder.dateModified.rawValue
+                                 || currentSort == FileSortOrder.dateCreated.rawValue)
+        let descending = UserDefaults.standard.object(forKey: "sortDescending") as? Bool ?? defaultDescending
+        let reverseItem = NSMenuItem(title: "Reverse Order", action: #selector(toggleSortDirection), keyEquivalent: "")
+        reverseItem.target = self
+        reverseItem.state = descending ? .on : .off
+        sortMenu.addItem(reverseItem)
         sortByItem.submenu = sortMenu
         menu.addItem(sortByItem)
 
@@ -256,7 +264,21 @@ class StatusItemController: NSObject {
 
     @objc private func setSortOrder(_ sender: NSMenuItem) {
         guard let raw = sender.representedObject as? String else { return }
+        let oldRaw = UserDefaults.standard.string(forKey: "sortOrder") ?? FileSortOrder.name.rawValue
+        if raw != oldRaw {
+            // Reset direction to the new mode's default when switching fields.
+            UserDefaults.standard.removeObject(forKey: "sortDescending")
+        }
         UserDefaults.standard.set(raw, forKey: "sortOrder")
+        model.reloadAll()
+    }
+
+    @objc private func toggleSortDirection() {
+        let currentSort = UserDefaults.standard.string(forKey: "sortOrder") ?? FileSortOrder.name.rawValue
+        let defaultDescending = (currentSort == FileSortOrder.dateModified.rawValue
+                                 || currentSort == FileSortOrder.dateCreated.rawValue)
+        let current = UserDefaults.standard.object(forKey: "sortDescending") as? Bool ?? defaultDescending
+        UserDefaults.standard.set(!current, forKey: "sortDescending")
         model.reloadAll()
     }
 

@@ -524,27 +524,32 @@ final class CascadeModel: ObservableObject {
                                                     options: [])) ?? []
         let sortOrder  = FileSortOrder(rawValue: UserDefaults.standard.string(forKey: "sortOrder") ?? "") ?? .name
         let showHidden = UserDefaults.standard.bool(forKey: "showHiddenFiles")
+        // Default direction per sort mode: name/type ascending, dates descending (newest first).
+        let defaultDescending: Bool = (sortOrder == .dateModified || sortOrder == .dateCreated)
+        let descending = UserDefaults.standard.object(forKey: "sortDescending") as? Bool ?? defaultDescending
         return contents
             .map { FileItem(url: $0) }
             .filter { showHidden || !$0.isHidden }
             .sorted { a, b in
                 if a.isDirectory != b.isDirectory { return a.isDirectory }
+                let ascending: Bool
                 switch sortOrder {
                 case .name:
-                    return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
+                    ascending = a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
                 case .dateModified:
                     let ad = (try? a.url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
                     let bd = (try? b.url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
-                    return ad > bd
+                    ascending = ad < bd
                 case .dateCreated:
                     let ad = (try? a.url.resourceValues(forKeys: [.creationDateKey]))?.creationDate ?? .distantPast
                     let bd = (try? b.url.resourceValues(forKeys: [.creationDateKey]))?.creationDate ?? .distantPast
-                    return ad > bd
+                    ascending = ad < bd
                 case .fileType:
                     let ae = a.url.pathExtension.lowercased()
                     let be = b.url.pathExtension.lowercased()
-                    return ae.localizedCaseInsensitiveCompare(be) == .orderedAscending
+                    ascending = ae.localizedCaseInsensitiveCompare(be) == .orderedAscending
                 }
+                return descending ? !ascending : ascending
             }
     }
 }
