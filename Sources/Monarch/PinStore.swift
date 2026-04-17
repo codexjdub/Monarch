@@ -43,11 +43,11 @@ final class PinStore {
         }
         data[folder.path] = list.isEmpty ? nil : list
         save()
-        NotificationCenter.default.post(name: .folderMenuPinsChanged, object: folder)
+        NotificationCenter.default.post(name: .monarchPinsChanged, object: folder)
         return newState
     }
 }
 
 extension Notification.Name {
-    static let folderMenuPinsChanged = Notification.Name("FolderMenuPinsChanged")
+    static let monarchPinsChanged = Notification.Name("MonarchPinsChanged")
 }

@@ -31,9 +31,9 @@ class StatusItemController: NSObject {
         buildPopover()
         setupHotkey()
 
-        // Listen for "Remove from FolderMenu" context-menu action on root rows.
+        // Listen for "Remove from Monarch" context-menu action on root rows.
         removeRootObs = NotificationCenter.default.addObserver(
-            forName: .folderMenuRemoveRoot, object: nil, queue: .main
+            forName: .monarchRemoveRoot, object: nil, queue: .main
         ) { [weak self] note in
             guard let url = note.object as? URL else { return }
             Task { @MainActor in self?.store.remove(url) }
@@ -60,12 +60,30 @@ class StatusItemController: NSObject {
 
     private func setupButton() {
         guard let button = statusItem.button else { return }
-        let icon = NSImage(systemSymbolName: "folder", accessibilityDescription: "FolderMenu")
-        icon?.isTemplate = true
-        button.image = icon
+        button.title = ""
+        button.image = Self.makeStatusIcon()
+        button.setAccessibilityLabel("Monarch")
         button.action = #selector(handleClick)
         button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         button.target = self
+    }
+
+    /// Loads `Resources/StatusIcon.png` from the bundle as a template image.
+    /// Marked template so macOS auto-inverts it for dark menu bars and
+    /// applies hover/selection tinting.
+    private static func makeStatusIcon() -> NSImage {
+        let pt: CGFloat = 18
+        let fallback = NSImage(size: NSSize(width: pt, height: pt))
+
+        guard let url = Bundle.main.url(forResource: "StatusIcon",
+                                        withExtension: "png"),
+              let img = NSImage(contentsOf: url)
+        else {
+            return fallback
+        }
+        img.size = NSSize(width: pt, height: pt)
+        img.isTemplate = true
+        return img
     }
 
     private func buildPopover() {
@@ -173,7 +191,7 @@ class StatusItemController: NSObject {
         guard let event = NSApp.currentEvent,
               let button = statusItem.button else { return }
         let menu = NSMenu()
-        menu.addItem(withTitle: "Quit FolderMenu", action: #selector(quitApp), keyEquivalent: "q")
+        menu.addItem(withTitle: "Quit Monarch", action: #selector(quitApp), keyEquivalent: "q")
             .target = self
         NSMenu.popUpContextMenu(menu, with: event, for: button)
     }
@@ -225,7 +243,7 @@ class StatusItemController: NSObject {
         menu.addItem(.separator())
         menu.addItem(withTitle: "Preferences…", action: #selector(openPreferences), keyEquivalent: ",")
             .target = self
-        menu.addItem(withTitle: "Quit FolderMenu", action: #selector(quitApp), keyEquivalent: "q")
+        menu.addItem(withTitle: "Quit Monarch", action: #selector(quitApp), keyEquivalent: "q")
             .target = self
 
         NSMenu.popUpContextMenu(menu, with: event, for: button)
@@ -238,7 +256,7 @@ class StatusItemController: NSObject {
     @objc private func addFolderAction() {
         popover.performClose(nil)
         let panel = NSOpenPanel()
-        panel.title = "Add a folder to FolderMenu"
+        panel.title = "Add a folder to Monarch"
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = true

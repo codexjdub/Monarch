@@ -17,7 +17,7 @@ final class PreferencesWindowController: NSObject {
         }
         let hosting = NSHostingController(rootView: PreferencesView())
         let win = NSWindow(contentViewController: hosting)
-        win.title = "FolderMenu Preferences"
+        win.title = "Monarch Preferences"
         win.styleMask = [.titled, .closable]
         win.setContentSize(NSSize(width: 440, height: 260))
         win.isReleasedWhenClosed = false
@@ -53,7 +53,7 @@ struct PreferencesView: View {
                     HotkeyManager.shared.installFromDefaults()
                 }
 
-                Text("Press this combination anywhere to open FolderMenu.")
+                Text("Press this combination anywhere to open Monarch.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -95,7 +95,7 @@ struct PreferencesView: View {
                     }
                 }
             } catch {
-                NSLog("FolderMenu: launch-at-login change failed: \(error)")
+                NSLog("Monarch: launch-at-login change failed: \(error)")
             }
         }
     }

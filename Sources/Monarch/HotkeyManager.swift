@@ -20,7 +20,7 @@ final class HotkeyManager {
 
     private var hotKeyRef: EventHotKeyRef?
     private var eventHandlerRef: EventHandlerRef?
-    private let signature: OSType = 0x464D4B59 // 'FMKY'
+    private let signature: OSType = 0x4D4E4B59 // 'MNKY'
 
     private init() {}
 
@@ -61,17 +61,16 @@ final class HotkeyManager {
         }, 1, &eventType, selfPtr, &eventHandlerRef)
 
         guard status == noErr else {
-            NSLog("FolderMenu: failed to install hotkey handler (\(status))")
+            NSLog("Monarch: failed to install hotkey handler (\(status))")
             return
         }
 
-        var hkID = EventHotKeyID(signature: signature, id: 1)
+        let hkID = EventHotKeyID(signature: signature, id: 1)
         let regStatus = RegisterEventHotKey(keyCode, modifiers, hkID,
                                             GetApplicationEventTarget(), 0, &hotKeyRef)
         if regStatus != noErr {
-            NSLog("FolderMenu: failed to register hotkey (\(regStatus))")
+            NSLog("Monarch: failed to register hotkey (\(regStatus))")
         }
-        _ = hkID  // silence unused
     }
 
     func unregister() {

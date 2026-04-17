@@ -25,7 +25,7 @@ enum FileDropHelper {
                 }
                 success += 1
             } catch {
-                NSLog("FolderMenu: drop failed for \(src.path) -> \(target.path): \(error)")
+                NSLog("Monarch: drop failed for \(src.path) -> \(target.path): \(error)")
             }
         }
         return success

@@ -142,7 +142,7 @@ final class CascadeModel: ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.rebuildLevel0() }
         pinObs = NotificationCenter.default.addObserver(
-            forName: .folderMenuPinsChanged, object: nil, queue: .main
+            forName: .monarchPinsChanged, object: nil, queue: .main
         ) { [weak self] note in
             guard let folder = note.object as? URL else { return }
             Task { @MainActor in self?.pinsChanged(folder: folder) }
@@ -430,22 +430,30 @@ final class CascadeModel: ObservableObject {
         closeDeeperThan(newLevel)
     }
 
+    // MARK: - Spring-loaded folders (drag hover opens peek)
+
+    /// Called when a drag hovers a folder row long enough. Opens the peek
+    /// immediately (no open delay — the spring-load delay already fired).
+    func springLoadFolder(level: Int, index: Int) {
+        guard levels.indices.contains(level),
+              levels[level].items.indices.contains(index) else { return }
+        let item = levels[level].items[index]
+        guard item.isDirectory else { return }
+        pendingOpen?.cancel(); pendingOpen = nil
+        openFolderPeek(atLevel: level + 1, folder: item.url, parentIndex: index)
+        pathIndices[level] = index
+    }
+
     // MARK: - Click (from row onTap)
 
     func clickRow(level: Int, index: Int) {
         guard levels.indices.contains(level),
               levels[level].items.indices.contains(index) else { return }
         let item = levels[level].items[index]
-        if item.isDirectory {
-            pendingOpen?.cancel(); pendingOpen = nil
-            openFolderPeek(atLevel: level + 1, folder: item.url, parentIndex: index)
-            // Mouse click → focus stays on parent (spec A).
-            focus = Focus(level: level, index: index)
-        } else {
-            // Any file (previewable or not) opens in default app on click.
-            NSWorkspace.shared.open(item.url)
-            onDismiss()
-        }
+        // Everything opens in the default app on click — folders open in
+        // Finder, files in their associated app. Hover handles peeks.
+        NSWorkspace.shared.open(item.url)
+        onDismiss()
     }
 
     // MARK: - Peek open / close

@@ -118,12 +118,16 @@ class DraggableNSView: NSView, NSDraggingSource {
     var selectionState: SelectionState?
     var parentFolder: URL?
     var removeFromRootHandler: (() -> Void)?
+    /// Called when a drag hovers this folder row long enough to spring-load.
+    var onSpringLoad: (() -> Void)?
 
     private var mouseDownEvent: NSEvent?
     private var dragStarted = false
     private var isDropTarget = false {
         didSet { needsDisplay = true }
     }
+    private var springLoadTimer: DispatchWorkItem?
+    private static let springLoadDelay: TimeInterval = 0.5
 
     override var acceptsFirstResponder: Bool { true }
 
@@ -169,6 +173,7 @@ class DraggableNSView: NSView, NSDraggingSource {
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
         guard let (urls, dest) = acceptableDrop(sender) else { return [] }
         isDropTarget = true
+        scheduleSpringLoad()
         return FileDropHelper.preferredOperation(sources: urls, dest: dest)
     }
 
@@ -179,10 +184,27 @@ class DraggableNSView: NSView, NSDraggingSource {
 
     override func draggingExited(_ sender: NSDraggingInfo?) {
         isDropTarget = false
+        cancelSpringLoad()
     }
 
     override func draggingEnded(_ sender: NSDraggingInfo) {
         isDropTarget = false
+        cancelSpringLoad()
+    }
+
+    private func scheduleSpringLoad() {
+        cancelSpringLoad()
+        guard fileItem?.isDirectory == true, onSpringLoad != nil else { return }
+        let task = DispatchWorkItem { [weak self] in
+            self?.onSpringLoad?()
+        }
+        springLoadTimer = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.springLoadDelay, execute: task)
+    }
+
+    private func cancelSpringLoad() {
+        springLoadTimer?.cancel()
+        springLoadTimer = nil
     }
 
     override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
@@ -328,10 +350,10 @@ class DraggableNSView: NSView, NSDraggingSource {
         trashItem.keyEquivalentModifierMask = [.command]
         trashItem.target = self
 
-        // Root-folder rows get a "Remove from FolderMenu" item.
+        // Root-folder rows get a "Remove from Monarch" item.
         if removeFromRootHandler != nil {
             menu.addItem(.separator())
-            menu.addItem(withTitle: "Remove from FolderMenu",
+            menu.addItem(withTitle: "Remove from Monarch",
                          action: #selector(removeFromRoot),
                          keyEquivalent: "").target = self
         }
@@ -467,6 +489,7 @@ struct DraggableFileRow: NSViewRepresentable {
     var isFocused: Bool = false
     var isOnPath: Bool = false
     var parentFolder: URL? = nil
+    var onSpringLoad: (() -> Void)? = nil
     var removeFromRootHandler: (() -> Void)? = nil
 
     func makeNSView(context: Context) -> DraggableNSView {
@@ -475,6 +498,7 @@ struct DraggableFileRow: NSViewRepresentable {
         view.onTap = onTap
         view.selectionState = selectionState
         view.parentFolder = parentFolder
+        view.onSpringLoad = onSpringLoad
         view.removeFromRootHandler = removeFromRootHandler
 
         let hosting = NSHostingView(rootView: makeContent())
@@ -494,6 +518,7 @@ struct DraggableFileRow: NSViewRepresentable {
         nsView.onTap = onTap
         nsView.selectionState = selectionState
         nsView.parentFolder = parentFolder
+        nsView.onSpringLoad = onSpringLoad
         nsView.removeFromRootHandler = removeFromRootHandler
         if let hosting = nsView.subviews.first as? NSHostingView<FileRowContent> {
             hosting.rootView = makeContent()

@@ -1,24 +1,26 @@
 #!/bin/bash
 set -e
 
-echo "Building FolderMenu..."
+# Kill any running instance before the build so it's fully gone by launch time.
+pkill -x Monarch 2>/dev/null || true
+
+echo "Building Monarch..."
 swift build -c release
 
-BINARY=".build/release/FolderMenu"
-APP_DIR="FolderMenu.app/Contents"
+BINARY=".build/release/Monarch"
+APP_DIR="Monarch.app/Contents"
 
-rm -rf FolderMenu.app
+rm -rf Monarch.app
 mkdir -p "$APP_DIR/MacOS"
 mkdir -p "$APP_DIR/Resources"
 
-cp "$BINARY" "$APP_DIR/MacOS/FolderMenu"
-chmod +x "$APP_DIR/MacOS/FolderMenu"
+cp "$BINARY" "$APP_DIR/MacOS/Monarch"
+chmod +x "$APP_DIR/MacOS/Monarch"
 cp Resources/Info.plist "$APP_DIR/Info.plist"
+cp Resources/AppIcon.icns "$APP_DIR/Resources/AppIcon.icns"
+cp Resources/StatusIcon.png "$APP_DIR/Resources/StatusIcon.png"
 printf "APPL????" > "$APP_DIR/PkgInfo"
 
-codesign --deep --force --sign - FolderMenu.app
+codesign --deep --force --sign - Monarch.app
 
-echo "Done! Run with: open FolderMenu.app"
-
-# Kill any running instance so the next `open` launches the fresh binary
-pkill -x FolderMenu 2>/dev/null || true
+echo "Done! Run with: open Monarch.app"

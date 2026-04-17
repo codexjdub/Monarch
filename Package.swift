@@ -2,12 +2,12 @@
 import PackageDescription
 
 let package = Package(
-    name: "FolderMenu",
+    name: "Monarch",
     platforms: [.macOS(.v13)],
     targets: [
         .executableTarget(
-            name: "FolderMenu",
-            path: "Sources/FolderMenu",
+            name: "Monarch",
+            path: "Sources/Monarch",
             linkerSettings: [
                 .linkedFramework("QuickLookUI"),
                 .linkedFramework("CoreServices"),

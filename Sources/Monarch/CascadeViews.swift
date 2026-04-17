@@ -27,7 +27,7 @@ struct LevelListView: View {
     @ViewBuilder private var header: some View {
         if level == 0 {
             HStack {
-                Text("FolderMenu").font(.headline)
+                Text("Monarch").font(.headline)
                 Spacer()
             }
             .padding(.horizontal, 12)
@@ -61,7 +61,7 @@ struct LevelListView: View {
 }
 
 extension Notification.Name {
-    static let folderMenuRemoveRoot = Notification.Name("FolderMenuRemoveRoot")
+    static let monarchRemoveRoot = Notification.Name("MonarchRemoveRoot")
 }
 
 // MARK: - Breadcrumb
@@ -152,7 +152,7 @@ struct CascadeRootView: View {
             VStack(spacing: 0) {
                 // Top bar with settings button (replaces LevelListView's header for level 0)
                 HStack {
-                    Text("FolderMenu").font(.headline)
+                    Text("Monarch").font(.headline)
                     Spacer()
                     Button(action: onSettingsTapped) {
                         Image(systemName: "ellipsis.circle").font(.system(size: 15))
@@ -266,8 +266,11 @@ struct LevelListBody: View {
                 isOnPath: model.pathIndices[level] == idx
                     && level + 1 < model.levels.count,
                 parentFolder: state.source,
+                onSpringLoad: item.isDirectory
+                    ? { model.springLoadFolder(level: level, index: idx) }
+                    : nil,
                 removeFromRootHandler: level == 0
-                    ? { NotificationCenter.default.post(name: .folderMenuRemoveRoot, object: item.url) }
+                    ? { NotificationCenter.default.post(name: .monarchRemoveRoot, object: item.url) }
                     : nil
             )
             .frame(height: 34)

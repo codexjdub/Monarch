@@ -12,7 +12,9 @@ DerivedData/
 *.xcodeproj/project.xcworkspace/xcuserdata/
 
 # Built app bundle
-FolderMenu.app/
+Monarch.app/
+Monarch *.app/
+*.dSYM/
 
 # Claude local settings (contains user-specific paths)
 .claude/settings.local.json
