@@ -1,8 +1,6 @@
 import AppKit
 import SwiftUI
 
-private let kPopoverWidth  = "popoverWidth"
-private let kPopoverHeight = "popoverHeight"
 
 @MainActor
 class StatusItemController: NSObject {
@@ -15,6 +13,7 @@ class StatusItemController: NSObject {
     private var spaceMonitor: Any?
     private var dragBeginMonitor: Any?
     private var dragEndMonitor: Any?
+    private var appearanceObserver: NSKeyValueObservation?
 
     init(store: ShortcutStore) {
         self.store = store
@@ -36,6 +35,13 @@ class StatusItemController: NSObject {
         setupButton()
         buildPopover()
         setupHotkey()
+
+        // Live-apply appearance when changed in Preferences.
+        appearanceObserver = UserDefaults.standard.observe(
+            \.appearanceMode, options: [.new]
+        ) { [weak self] _, _ in
+            DispatchQueue.main.async { self?.applyAppearance() }
+        }
     }
 
     private func setupHotkey() {
@@ -50,8 +56,8 @@ class StatusItemController: NSObject {
     }
 
     private var savedPopoverSize: NSSize {
-        let w = UserDefaults.standard.double(forKey: kPopoverWidth)
-        let h = UserDefaults.standard.double(forKey: kPopoverHeight)
+        let w = UserDefaults.standard.double(forKey: UDKey.popoverWidth)
+        let h = UserDefaults.standard.double(forKey: UDKey.popoverHeight)
         return NSSize(width: w > 100 ? w : 320, height: h > 100 ? h : 440)
     }
 
@@ -111,9 +117,26 @@ class StatusItemController: NSObject {
             onResizeDrag:  { [weak self] delta in self?.handleResizeDrag(delta) },
             onResizeEnded: { [weak self] in self?.handleResizeEnded() }
         )
+        let visualEffect = NSVisualEffectView()
+        visualEffect.material = .sidebar
+        visualEffect.blendingMode = .behindWindow
+        visualEffect.state = .active
+
         let hc = NSHostingController(rootView: contentView)
         hc.sizingOptions = []
-        popover.contentViewController = hc
+        hc.view.translatesAutoresizingMaskIntoConstraints = false
+        hc.view.wantsLayer = true
+        hc.view.layer?.backgroundColor = NSColor.clear.cgColor
+        visualEffect.addSubview(hc.view)
+        NSLayoutConstraint.activate([
+            hc.view.leadingAnchor.constraint(equalTo: visualEffect.leadingAnchor),
+            hc.view.trailingAnchor.constraint(equalTo: visualEffect.trailingAnchor),
+            hc.view.topAnchor.constraint(equalTo: visualEffect.topAnchor),
+            hc.view.bottomAnchor.constraint(equalTo: visualEffect.bottomAnchor),
+        ])
+        let vc = NSViewController()
+        vc.view = visualEffect
+        popover.contentViewController = vc
         popover.contentSize = savedPopoverSize
         popover.behavior = .transient
         popover.animates = true
@@ -131,6 +154,7 @@ class StatusItemController: NSObject {
 
     func openPopover() {
         guard let button = statusItem.button else { return }
+        applyAppearance()
         popover.contentSize = savedPopoverSize
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         popover.contentViewController?.view.window?.makeKey()
@@ -138,6 +162,13 @@ class StatusItemController: NSObject {
         model.reloadAll()
         installKeyMonitor()
         installDragMonitor()
+    }
+
+    private func applyAppearance() {
+        let mode = AppearanceMode(
+            rawValue: UserDefaults.standard.string(forKey: UDKey.appearanceMode) ?? ""
+        ) ?? .system
+        popover.appearance = mode.nsAppearance
     }
 
     private func installKeyMonitor() {
@@ -261,8 +292,8 @@ class StatusItemController: NSObject {
         popover.animates = true
         let sz = popover.contentSize
         guard sz.width > 100, sz.height > 100 else { return }
-        UserDefaults.standard.set(Double(sz.width),  forKey: kPopoverWidth)
-        UserDefaults.standard.set(Double(sz.height), forKey: kPopoverHeight)
+        UserDefaults.standard.set(Double(sz.width),  forKey: UDKey.popoverWidth)
+        UserDefaults.standard.set(Double(sz.height), forKey: UDKey.popoverHeight)
     }
 
     func togglePopover() {
@@ -302,12 +333,12 @@ class StatusItemController: NSObject {
 
         let hiddenItem = NSMenuItem(title: "Show Hidden Files", action: #selector(toggleHiddenFiles), keyEquivalent: "")
         hiddenItem.target = self
-        hiddenItem.state = UserDefaults.standard.bool(forKey: "showHiddenFiles") ? .on : .off
+        hiddenItem.state = UserDefaults.standard.bool(forKey: UDKey.showHiddenFiles) ? .on : .off
         menu.addItem(hiddenItem)
 
         let sortByItem = NSMenuItem(title: "Sort By", action: nil, keyEquivalent: "")
         let sortMenu = NSMenu(title: "Sort By")
-        let currentSort = UserDefaults.standard.string(forKey: "sortOrder") ?? FileSortOrder.name.rawValue
+        let currentSort = UserDefaults.standard.string(forKey: UDKey.sortOrder) ?? FileSortOrder.name.rawValue
         for order in FileSortOrder.allCases {
             let item = NSMenuItem(title: order.label, action: #selector(setSortOrder(_:)), keyEquivalent: "")
             item.target = self
@@ -318,7 +349,7 @@ class StatusItemController: NSObject {
         sortMenu.addItem(.separator())
         let defaultDescending = (currentSort == FileSortOrder.dateModified.rawValue
                                  || currentSort == FileSortOrder.dateCreated.rawValue)
-        let descending = UserDefaults.standard.object(forKey: "sortDescending") as? Bool ?? defaultDescending
+        let descending = UserDefaults.standard.object(forKey: UDKey.sortDescending) as? Bool ?? defaultDescending
         let reverseItem = NSMenuItem(title: "Reverse Order", action: #selector(toggleSortDirection), keyEquivalent: "")
         reverseItem.target = self
         reverseItem.state = descending ? .on : .off
@@ -361,28 +392,28 @@ class StatusItemController: NSObject {
     }
 
     @objc private func toggleHiddenFiles() {
-        let current = UserDefaults.standard.bool(forKey: "showHiddenFiles")
-        UserDefaults.standard.set(!current, forKey: "showHiddenFiles")
+        let current = UserDefaults.standard.bool(forKey: UDKey.showHiddenFiles)
+        UserDefaults.standard.set(!current, forKey: UDKey.showHiddenFiles)
         model.reloadAll()
     }
 
     @objc private func setSortOrder(_ sender: NSMenuItem) {
         guard let raw = sender.representedObject as? String else { return }
-        let oldRaw = UserDefaults.standard.string(forKey: "sortOrder") ?? FileSortOrder.name.rawValue
+        let oldRaw = UserDefaults.standard.string(forKey: UDKey.sortOrder) ?? FileSortOrder.name.rawValue
         if raw != oldRaw {
             // Reset direction to the new mode's default when switching fields.
-            UserDefaults.standard.removeObject(forKey: "sortDescending")
+            UserDefaults.standard.removeObject(forKey: UDKey.sortDescending)
         }
-        UserDefaults.standard.set(raw, forKey: "sortOrder")
+        UserDefaults.standard.set(raw, forKey: UDKey.sortOrder)
         model.reloadAll()
     }
 
     @objc private func toggleSortDirection() {
-        let currentSort = UserDefaults.standard.string(forKey: "sortOrder") ?? FileSortOrder.name.rawValue
+        let currentSort = UserDefaults.standard.string(forKey: UDKey.sortOrder) ?? FileSortOrder.name.rawValue
         let defaultDescending = (currentSort == FileSortOrder.dateModified.rawValue
                                  || currentSort == FileSortOrder.dateCreated.rawValue)
-        let current = UserDefaults.standard.object(forKey: "sortDescending") as? Bool ?? defaultDescending
-        UserDefaults.standard.set(!current, forKey: "sortDescending")
+        let current = UserDefaults.standard.object(forKey: UDKey.sortDescending) as? Bool ?? defaultDescending
+        UserDefaults.standard.set(!current, forKey: UDKey.sortDescending)
         model.reloadAll()
     }
 
@@ -410,8 +441,8 @@ extension StatusItemController: NSPopoverDelegate {
         guard let window = popover.contentViewController?.view.window,
               let sz = window.contentView?.frame.size,
               sz.width > 100, sz.height > 100 else { return }
-        UserDefaults.standard.set(Double(sz.width),  forKey: kPopoverWidth)
-        UserDefaults.standard.set(Double(sz.height), forKey: kPopoverHeight)
+        UserDefaults.standard.set(Double(sz.width),  forKey: UDKey.popoverWidth)
+        UserDefaults.standard.set(Double(sz.height), forKey: UDKey.popoverHeight)
     }
 }
 

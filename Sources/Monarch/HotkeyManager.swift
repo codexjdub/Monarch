@@ -43,20 +43,11 @@ final class HotkeyManager {
         var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard),
                                       eventKind: OSType(kEventHotKeyPressed))
         let selfPtr = Unmanaged.passUnretained(self).toOpaque()
-        let status = InstallEventHandler(GetApplicationEventTarget(), { (_, eventRef, userData) -> OSStatus in
-            guard let userData, let eventRef else { return noErr }
-            var hkID = EventHotKeyID()
-            let err = GetEventParameter(eventRef,
-                                        EventParamName(kEventParamDirectObject),
-                                        EventParamType(typeEventHotKeyID),
-                                        nil,
-                                        MemoryLayout<EventHotKeyID>.size,
-                                        nil,
-                                        &hkID)
-            if err == noErr {
-                let mgr = Unmanaged<HotkeyManager>.fromOpaque(userData).takeUnretainedValue()
-                DispatchQueue.main.async { mgr.onTrigger?() }
-            }
+        let status = InstallEventHandler(GetApplicationEventTarget(), { (_, _, userData) -> OSStatus in
+            guard let userData else { return noErr }
+            // Monarch registers exactly one hotkey — no need to inspect the ID.
+            let mgr = Unmanaged<HotkeyManager>.fromOpaque(userData).takeUnretainedValue()
+            DispatchQueue.main.async { mgr.onTrigger?() }
             return noErr
         }, 1, &eventType, selfPtr, &eventHandlerRef)
 

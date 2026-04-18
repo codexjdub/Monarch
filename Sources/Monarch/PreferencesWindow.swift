@@ -9,10 +9,12 @@ final class PreferencesWindowController: NSObject {
 
     private var window: NSWindow?
     private var store: ShortcutStore?
+    private var appearanceObserver: NSKeyValueObservation?
 
     func show(store: ShortcutStore) {
         self.store = store
         if let win = window {
+            applyAppearance(to: win)
             win.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
@@ -27,8 +29,24 @@ final class PreferencesWindowController: NSObject {
         win.isReleasedWhenClosed = false
         win.center()
         self.window = win
+        applyAppearance(to: win)
         win.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+
+        appearanceObserver = UserDefaults.standard.observe(
+            \.appearanceMode, options: [.new]
+        ) { [weak self] _, _ in
+            DispatchQueue.main.async {
+                if let win = self?.window { self?.applyAppearance(to: win) }
+            }
+        }
+    }
+
+    private func applyAppearance(to win: NSWindow) {
+        let mode = AppearanceMode(
+            rawValue: UserDefaults.standard.string(forKey: UDKey.appearanceMode) ?? ""
+        ) ?? .system
+        win.appearance = mode.nsAppearance
     }
 }
 
@@ -40,8 +58,9 @@ struct PreferencesView: View {
     @AppStorage(kHotkeyEnabledKey) private var hotkeyEnabled: Bool = true
     @AppStorage(kHotkeyDisplayKey) private var hotkeyDisplay: String = defaultHotkeyDisplay
 
-    @AppStorage("showFooterBar") private var showFooterBar: Bool = true
-    @AppStorage("rowDensity") private var densityRaw: String = RowDensity.medium.rawValue
+    @AppStorage(UDKey.showFooterBar) private var showFooterBar: Bool = true
+    @AppStorage(UDKey.rowDensity) private var densityRaw: String = RowDensity.medium.rawValue
+    @AppStorage(UDKey.appearanceMode) private var appearanceModeRaw: String = AppearanceMode.system.rawValue
     @State private var launchAtLogin: Bool = PreferencesView.readLaunchAtLogin()
 
     var body: some View {
@@ -116,6 +135,17 @@ struct PreferencesView: View {
                     Picker("", selection: $densityRaw) {
                         ForEach(RowDensity.allCases, id: \.rawValue) { d in
                             Text(d.label).tag(d.rawValue)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 180)
+                }
+                HStack {
+                    Text("Appearance")
+                    Spacer()
+                    Picker("", selection: $appearanceModeRaw) {
+                        ForEach(AppearanceMode.allCases, id: \.rawValue) { m in
+                            Text(m.label).tag(m.rawValue)
                         }
                     }
                     .pickerStyle(.segmented)

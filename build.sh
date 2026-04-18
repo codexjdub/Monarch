@@ -24,4 +24,5 @@ printf "APPL????" > "$APP_DIR/PkgInfo"
 
 codesign --deep --force --sign - Monarch.app
 
-echo "Done! Run with: open Monarch.app"
+echo "Done!"
+open Monarch.app

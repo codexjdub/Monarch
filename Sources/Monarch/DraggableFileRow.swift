@@ -107,7 +107,7 @@ struct FileRowContent: View {
     let isFocused: Bool
     let isOnPath: Bool
 
-    @AppStorage("rowDensity") private var densityRaw: String = RowDensity.medium.rawValue
+    @AppStorage(UDKey.rowDensity) private var densityRaw: String = RowDensity.medium.rawValue
     private var density: RowDensity { RowDensity(rawValue: densityRaw) ?? .medium }
 
     var isSelected: Bool { selectionState.isSelected(item.url) }
@@ -163,8 +163,15 @@ struct FileRowContent: View {
 // MARK: - NSView handling drag + click + context menu
 //
 // No hover tracking here. The window-level WindowMouseTracker owns hover.
+//
+// Stored properties live in the class body (Swift extensions can't add them).
+// Behavior is grouped into extensions below: Mouse & Drag Source, Drop Target,
+// Context Menu, Context Menu Actions.
 
 class DraggableNSView: NSView, NSDraggingSource {
+
+    // MARK: Configuration (set by DraggableFileRow wrapper)
+
     var fileItem: FileItem?
     var onTap: (() -> Void)?
     var selectionState: SelectionState?
@@ -174,15 +181,23 @@ class DraggableNSView: NSView, NSDraggingSource {
     /// Called when a drag hovers this folder row long enough to spring-load.
     var onSpringLoad: (() -> Void)?
 
-    private var mouseDownEvent: NSEvent?
-    private var dragStarted = false
-    private var isDropTarget = false {
-        didSet { needsDisplay = true }
-    }
-    private var springLoadTimer: DispatchWorkItem?
-    private static let springLoadDelay: TimeInterval = 0.5
+    // MARK: Mouse / drag state
+
+    fileprivate var mouseDownEvent: NSEvent?
+    fileprivate var dragStarted = false
+
+    // MARK: Drop target state
+
+    fileprivate var isDropTarget = false { didSet { needsDisplay = true } }
+    fileprivate var springLoadTimer: DispatchWorkItem?
+    fileprivate static let springLoadDelay: TimeInterval = 0.5
+
+    // MARK: Boilerplate
 
     override var acceptsFirstResponder: Bool { true }
+    // Clicks in non-key windows (peek) register as-is rather than being
+    // swallowed by window activation.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -195,97 +210,16 @@ class DraggableNSView: NSView, NSDraggingSource {
         wantsLayer = true
         registerForDraggedTypes([.fileURL])
     }
+}
 
-    // Clicks in non-key windows (peek) register as-is rather than being
-    // swallowed by window activation.
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+// MARK: - Mouse & drag source
+
+extension DraggableNSView /* Mouse & Drag Source */ {
 
     func draggingSession(_ session: NSDraggingSession,
                          sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
-        return [.copy, .move]
+        [.copy, .move]
     }
-
-    // MARK: - Drop target (folder rows accept file drops)
-
-    private func incomingURLs(_ sender: NSDraggingInfo) -> [URL] {
-        (sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL]) ?? []
-    }
-
-    /// Only folder rows accept drops, and only for URLs that don't land inside
-    /// their own subtree.
-    private func acceptableDrop(_ sender: NSDraggingInfo) -> (URLs: [URL], dest: URL)? {
-        guard let item = fileItem, item.isDirectory else { return nil }
-        let urls = incomingURLs(sender).filter { src in
-            // Reject self-drops and drops into own subtree.
-            src != item.url && !item.url.path.hasPrefix(src.path + "/")
-        }
-        guard !urls.isEmpty else { return nil }
-        return (urls, item.url)
-    }
-
-    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        guard let (urls, dest) = acceptableDrop(sender) else { return [] }
-        isDropTarget = true
-        scheduleSpringLoad()
-        return FileDropHelper.preferredOperation(sources: urls, dest: dest)
-    }
-
-    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-        guard let (urls, dest) = acceptableDrop(sender) else { return [] }
-        return FileDropHelper.preferredOperation(sources: urls, dest: dest)
-    }
-
-    override func draggingExited(_ sender: NSDraggingInfo?) {
-        isDropTarget = false
-        cancelSpringLoad()
-    }
-
-    override func draggingEnded(_ sender: NSDraggingInfo) {
-        isDropTarget = false
-        cancelSpringLoad()
-    }
-
-    private func scheduleSpringLoad() {
-        cancelSpringLoad()
-        guard fileItem?.isDirectory == true, onSpringLoad != nil else { return }
-        let task = DispatchWorkItem { [weak self] in
-            self?.onSpringLoad?()
-        }
-        springLoadTimer = task
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.springLoadDelay, execute: task)
-    }
-
-    private func cancelSpringLoad() {
-        springLoadTimer?.cancel()
-        springLoadTimer = nil
-    }
-
-    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        acceptableDrop(sender) != nil
-    }
-
-    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        guard let (urls, dest) = acceptableDrop(sender) else { return false }
-        let op = FileDropHelper.preferredOperation(sources: urls, dest: dest)
-        let n = FileDropHelper.perform(urls: urls, into: dest, operation: op)
-        isDropTarget = false
-        return n > 0
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        super.draw(dirtyRect)
-        if isDropTarget {
-            let inset = bounds.insetBy(dx: 3, dy: 2)
-            let path = NSBezierPath(roundedRect: inset, xRadius: 6, yRadius: 6)
-            NSColor.controlAccentColor.withAlphaComponent(0.18).setFill()
-            path.fill()
-            NSColor.controlAccentColor.withAlphaComponent(0.7).setStroke()
-            path.lineWidth = 1.5
-            path.stroke()
-        }
-    }
-
-    // MARK: Mouse
 
     override func mouseDown(with event: NSEvent) {
         mouseDownEvent = event
@@ -335,10 +269,95 @@ class DraggableNSView: NSView, NSDraggingSource {
         mouseDownEvent = nil
         dragStarted = false
     }
+}
+
+// MARK: - Drop target
+
+extension DraggableNSView /* Drop Target */ {
+
+    private func incomingURLs(_ sender: NSDraggingInfo) -> [URL] {
+        (sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL]) ?? []
+    }
+
+    /// Only folder rows accept drops, and only for URLs that don't land inside
+    /// their own subtree.
+    private func acceptableDrop(_ sender: NSDraggingInfo) -> (URLs: [URL], dest: URL)? {
+        guard let item = fileItem, item.isDirectory else { return nil }
+        let urls = incomingURLs(sender).filter { src in
+            src != item.url && !item.url.path.hasPrefix(src.path + "/")
+        }
+        guard !urls.isEmpty else { return nil }
+        return (urls, item.url)
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard let (urls, dest) = acceptableDrop(sender) else { return [] }
+        isDropTarget = true
+        scheduleSpringLoad()
+        return FileDropHelper.preferredOperation(sources: urls, dest: dest)
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard let (urls, dest) = acceptableDrop(sender) else { return [] }
+        return FileDropHelper.preferredOperation(sources: urls, dest: dest)
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        isDropTarget = false
+        cancelSpringLoad()
+    }
+
+    override func draggingEnded(_ sender: NSDraggingInfo) {
+        isDropTarget = false
+        cancelSpringLoad()
+    }
+
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        acceptableDrop(sender) != nil
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard let (urls, dest) = acceptableDrop(sender) else { return false }
+        let op = FileDropHelper.preferredOperation(sources: urls, dest: dest)
+        let n = FileDropHelper.perform(urls: urls, into: dest, operation: op)
+        isDropTarget = false
+        return n > 0
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard isDropTarget else { return }
+        let inset = bounds.insetBy(dx: 3, dy: 2)
+        let path = NSBezierPath(roundedRect: inset, xRadius: 6, yRadius: 6)
+        NSColor.controlAccentColor.withAlphaComponent(0.18).setFill()
+        path.fill()
+        NSColor.controlAccentColor.withAlphaComponent(0.7).setStroke()
+        path.lineWidth = 1.5
+        path.stroke()
+    }
+
+    // MARK: Spring-load
+
+    private func scheduleSpringLoad() {
+        cancelSpringLoad()
+        guard fileItem?.isDirectory == true, onSpringLoad != nil else { return }
+        let task = DispatchWorkItem { [weak self] in self?.onSpringLoad?() }
+        springLoadTimer = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.springLoadDelay, execute: task)
+    }
+
+    private func cancelSpringLoad() {
+        springLoadTimer?.cancel()
+        springLoadTimer = nil
+    }
+}
+
+// MARK: - Context menu
+
+extension DraggableNSView /* Context Menu */ {
 
     override func rightMouseDown(with event: NSEvent) {
         guard let item = fileItem else { return }
-        let menu = NSMenu()
 
         let urlsToAct: [URL] = {
             if let sel = selectionState, sel.isSelected(item.url), sel.selectedURLs.count > 1 {
@@ -347,17 +366,20 @@ class DraggableNSView: NSView, NSDraggingSource {
             return [item.url]
         }()
 
+        let menu = NSMenu()
+
+        // Open
         let openTitle = urlsToAct.count > 1 ? "Open \(urlsToAct.count) Items" : "Open"
         menu.addItem(withTitle: openTitle, action: #selector(openFiles), keyEquivalent: "").target = self
 
-        // Quick Look — single file only (directories fall back to Finder).
+        // Quick Look — single file only.
         if urlsToAct.count == 1, !item.isDirectory {
             menu.addItem(withTitle: "Quick Look", action: #selector(showQuickLook), keyEquivalent: " ").target = self
         }
 
+        // Show in Finder / Open With
         if urlsToAct.count == 1 {
             menu.addItem(withTitle: "Show in Finder", action: #selector(showInFinder), keyEquivalent: "").target = self
-
             if !item.isDirectory, let openWithMenu = buildOpenWithMenu(for: item.url) {
                 let owItem = NSMenuItem(title: "Open With", action: nil, keyEquivalent: "")
                 owItem.submenu = openWithMenu
@@ -367,85 +389,68 @@ class DraggableNSView: NSView, NSDraggingSource {
 
         menu.addItem(.separator())
 
-        // Share… — system-provided submenu (AirDrop, Mail, Messages, …).
+        // Share
         if !urlsToAct.isEmpty {
-            let picker = NSSharingServicePicker(items: urlsToAct)
-            let shareItem = picker.standardShareMenuItem
-            menu.addItem(shareItem)
+            menu.addItem(NSSharingServicePicker(items: urlsToAct).standardShareMenuItem)
             menu.addItem(.separator())
         }
 
+        // Copy
         let copyTitle = urlsToAct.count > 1 ? "Copy \(urlsToAct.count) Items" : "Copy"
         menu.addItem(withTitle: copyTitle, action: #selector(copyFiles), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Copy Path", action: #selector(copyPath), keyEquivalent: "").target = self
         if urlsToAct.count == 1 {
             menu.addItem(withTitle: "Copy Name", action: #selector(copyName), keyEquivalent: "").target = self
         }
-
         if urlsToAct.count == 1, let dims = item.imageDimensions {
             menu.addItem(withTitle: "Copy Dimensions (\(dims))", action: #selector(copyDimensions), keyEquivalent: "").target = self
         }
 
-        // Pin / Unpin (only in folder levels, not level 0 roots).
+        // Pin / Unpin
         if urlsToAct.count == 1, let folder = parentFolder {
             let pinned = PinStore.shared.isPinned(item.url, in: folder)
-            let pinItem = menu.addItem(
-                withTitle: pinned ? "Unpin" : "Pin to Top",
-                action: #selector(togglePin),
-                keyEquivalent: ""
-            )
-            pinItem.target = self
+            menu.addItem(withTitle: pinned ? "Unpin" : "Pin to Top",
+                         action: #selector(togglePin),
+                         keyEquivalent: "").target = self
         }
 
-        // Add to Monarch — promote a peek item to level 0.
+        // Add to Monarch
         if addToRootHandler != nil, urlsToAct.count == 1 {
-            menu.addItem(withTitle: "Add to Monarch",
-                         action: #selector(addToRoot),
-                         keyEquivalent: "").target = self
+            menu.addItem(withTitle: "Add to Monarch", action: #selector(addToRoot), keyEquivalent: "").target = self
         }
 
-        // New folder creation
-        var addedNewFolderSep = false
+        // New Folder
+        var addedFolderSep = false
         if urlsToAct.count == 1, item.isDirectory {
-            menu.addItem(.separator()); addedNewFolderSep = true
-            menu.addItem(withTitle: "New Folder Inside",
-                         action: #selector(newFolderInsideAction),
-                         keyEquivalent: "").target = self
+            menu.addItem(.separator()); addedFolderSep = true
+            menu.addItem(withTitle: "New Folder Inside", action: #selector(newFolderInsideAction), keyEquivalent: "").target = self
         }
         if parentFolder != nil {
-            if !addedNewFolderSep { menu.addItem(.separator()) }
-            menu.addItem(withTitle: "New Folder Here",
-                         action: #selector(newFolderHereAction),
-                         keyEquivalent: "").target = self
+            if !addedFolderSep { menu.addItem(.separator()) }
+            menu.addItem(withTitle: "New Folder Here", action: #selector(newFolderHereAction), keyEquivalent: "").target = self
         }
 
-        // Rename (single item only)
+        // Rename
         if urlsToAct.count == 1 {
             menu.addItem(.separator())
-            menu.addItem(withTitle: "Rename…",
-                         action: #selector(renameAction),
-                         keyEquivalent: "").target = self
+            menu.addItem(withTitle: "Rename…", action: #selector(renameAction), keyEquivalent: "").target = self
         }
 
+        // Trash
         menu.addItem(.separator())
         let trashTitle = urlsToAct.count > 1 ? "Move \(urlsToAct.count) Items to Trash" : "Move to Trash"
-        let trashItem = menu.addItem(withTitle: trashTitle, action: #selector(moveToTrash), keyEquivalent: "\u{8}") // backspace
+        let trashItem = menu.addItem(withTitle: trashTitle, action: #selector(moveToTrash), keyEquivalent: "\u{8}")
         trashItem.keyEquivalentModifierMask = [.command]
         trashItem.target = self
 
-        // Root rows get "Remove from Monarch" at the bottom.
+        // Remove from Monarch
         if removeFromRootHandler != nil {
             menu.addItem(.separator())
-            menu.addItem(withTitle: "Remove from Monarch",
-                         action: #selector(removeFromRoot),
-                         keyEquivalent: "").target = self
+            menu.addItem(withTitle: "Remove from Monarch", action: #selector(removeFromRoot), keyEquivalent: "").target = self
         }
 
         NSMenu.popUpContextMenu(menu, with: event, for: self)
     }
-
-
-    // MARK: Actions
 
     private func buildOpenWithMenu(for url: URL) -> NSMenu? {
         let defaultApp = NSWorkspace.shared.urlForApplication(toOpen: url)
@@ -454,7 +459,6 @@ class DraggableNSView: NSView, NSDraggingSource {
 
         var seen = Set<String>()
         var apps: [URL] = []
-
         if let d = defaultApp {
             let id = Bundle(url: d)?.bundleIdentifier ?? d.path
             if seen.insert(id).inserted { apps.append(d) }
@@ -484,6 +488,21 @@ class DraggableNSView: NSView, NSDraggingSource {
         }
         return menu
     }
+}
+
+// MARK: - Context menu actions
+
+extension DraggableNSView /* Actions */ {
+
+    /// URLs the context menu should act on: the multi-selection if this row
+    /// is part of it, otherwise just this row's URL.
+    private func currentActionURLs() -> [URL] {
+        guard let item = fileItem else { return [] }
+        if let sel = selectionState, sel.isSelected(item.url), sel.selectedURLs.count > 1 {
+            return Array(sel.selectedURLs)
+        }
+        return [item.url]
+    }
 
     @objc private func openWithApp(_ sender: NSMenuItem) {
         guard let pair = sender.representedObject as? [URL], pair.count == 2 else { return }
@@ -501,9 +520,22 @@ class DraggableNSView: NSView, NSDraggingSource {
         for url in urls { NSWorkspace.shared.open(url) }
     }
 
+    @objc private func showQuickLook() {
+        guard let url = fileItem?.url, !url.hasDirectoryPath else { return }
+        QuickLookManager.shared.show(urls: [url])
+    }
+
     @objc private func showInFinder() {
         guard let url = fileItem?.url else { return }
         NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    @objc private func copyFiles() {
+        let urls = currentActionURLs()
+        guard !urls.isEmpty else { return }
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.writeObjects(urls.map { $0 as NSURL })
     }
 
     @objc private func copyPath() {
@@ -518,33 +550,10 @@ class DraggableNSView: NSView, NSDraggingSource {
         NSPasteboard.general.setString(url.lastPathComponent, forType: .string)
     }
 
-    @objc private func copyFiles() {
-        let urls = currentActionURLs()
-        guard !urls.isEmpty else { return }
-        let pb = NSPasteboard.general
-        pb.clearContents()
-        pb.writeObjects(urls.map { $0 as NSURL })
-    }
-
-    @objc private func moveToTrash() {
-        let urls = currentActionURLs()
-        guard !urls.isEmpty else { return }
-        NSWorkspace.shared.recycle(urls, completionHandler: nil)
-    }
-
-    @objc private func showQuickLook() {
-        guard let url = fileItem?.url, !url.hasDirectoryPath else { return }
-        QuickLookManager.shared.show(urls: [url])
-    }
-
-    /// URLs the context menu should act on: the multi-selection if this row
-    /// is part of it, otherwise just this row's URL.
-    private func currentActionURLs() -> [URL] {
-        guard let item = fileItem else { return [] }
-        if let sel = selectionState, sel.isSelected(item.url), sel.selectedURLs.count > 1 {
-            return Array(sel.selectedURLs)
-        }
-        return [item.url]
+    @objc private func copyDimensions() {
+        guard let dims = fileItem?.imageDimensions else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(dims, forType: .string)
     }
 
     @objc private func togglePin() {
@@ -552,19 +561,19 @@ class DraggableNSView: NSView, NSDraggingSource {
         PinStore.shared.togglePin(item.url, in: folder)
     }
 
-    @objc private func copyDimensions() {
-        guard let dims = fileItem?.imageDimensions else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(dims, forType: .string)
+    @objc private func addToRoot() {
+        guard let url = fileItem?.url else { return }
+        addToRootHandler?(url)
     }
 
     @objc private func removeFromRoot() {
         removeFromRootHandler?()
     }
 
-    @objc private func addToRoot() {
-        guard let url = fileItem?.url else { return }
-        addToRootHandler?(url)
+    @objc private func moveToTrash() {
+        let urls = currentActionURLs()
+        guard !urls.isEmpty else { return }
+        NSWorkspace.shared.recycle(urls, completionHandler: nil)
     }
 
     @objc private func renameAction() {
@@ -621,19 +630,15 @@ class DraggableNSView: NSView, NSDraggingSource {
         let raw = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         let name = raw.isEmpty ? "New Folder" : raw
 
-        // Collision handling: "New Folder", "New Folder 2", "New Folder 3", …
         var dest = directory.appendingPathComponent(name)
         if FileManager.default.fileExists(atPath: dest.path) {
             var i = 2
-            repeat {
-                dest = directory.appendingPathComponent("\(name) \(i)")
-                i += 1
-            } while FileManager.default.fileExists(atPath: dest.path)
+            repeat { dest = directory.appendingPathComponent("\(name) \(i)"); i += 1 }
+            while FileManager.default.fileExists(atPath: dest.path)
         }
 
         do {
-            try FileManager.default.createDirectory(at: dest,
-                withIntermediateDirectories: false)
+            try FileManager.default.createDirectory(at: dest, withIntermediateDirectories: false)
         } catch {
             let err = NSAlert()
             err.messageText = "Couldn't Create Folder"

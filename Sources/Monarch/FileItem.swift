@@ -72,61 +72,56 @@ struct FileItem: Identifiable, Hashable {
     let id = UUID()
     let url: URL
 
+    // Cheap derived properties — computed on every access (trivial cost).
     var name: String { url.lastPathComponent }
+    var isHidden: Bool { name.hasPrefix(".") }
+    var icon: NSImage { NSWorkspace.shared.icon(forFile: url.path) }
 
-    var isDirectory: Bool {
-        (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
-    }
+    // Cached at init — these involve filesystem or image-header reads that
+    // would otherwise repeat on every row render.
+    let isDirectory: Bool
+    let fileSize: String?
+    let previewKind: PreviewKind?
+    let imageDimensions: String?
 
-    var isHidden: Bool {
-        name.hasPrefix(".")
-    }
+    init(url: URL) {
+        self.url = url
 
-    var icon: NSImage {
-        NSWorkspace.shared.icon(forFile: url.path)
-    }
+        // Batch-fetch isDirectory + fileSize in one syscall.
+        let resources = try? url.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey])
+        let isDir = resources?.isDirectory ?? false
+        self.isDirectory = isDir
+        if let bytes = resources?.fileSize, !isDir {
+            self.fileSize = ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+        } else {
+            self.fileSize = nil
+        }
 
-    var fileSize: String? {
-        guard !isDirectory,
-              let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize
-        else { return nil }
-        return ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)
-    }
-
-    /// Non-nil if this file can be previewed in a peek pane. Folders never preview
-    /// (they open a folder peek instead).
-    var previewKind: PreviewKind? {
-        guard !isDirectory else { return nil }
+        // previewKind — pure string comparisons, but depends on isDirectory.
         let ext = url.pathExtension.lowercased()
-        if ext.isEmpty { return nil }
-        if imageExts.contains(ext)     { return .image }
-        if ext == "pdf"                { return .pdf }
-        if markdownExts.contains(ext)  { return .markdown }
-        if textExts.contains(ext)      { return .text }
-        if videoExts.contains(ext)     { return .video }
-        if audioExts.contains(ext)     { return .audio }
-        if quicklookExts.contains(ext) { return .quicklook }
-        return nil
+        if isDir || ext.isEmpty {
+            self.previewKind = nil
+        } else if imageExts.contains(ext)     { self.previewKind = .image }
+        else if ext == "pdf"                   { self.previewKind = .pdf }
+        else if markdownExts.contains(ext)     { self.previewKind = .markdown }
+        else if textExts.contains(ext)         { self.previewKind = .text }
+        else if videoExts.contains(ext)        { self.previewKind = .video }
+        else if audioExts.contains(ext)        { self.previewKind = .audio }
+        else if quicklookExts.contains(ext)    { self.previewKind = .quicklook }
+        else                                   { self.previewKind = nil }
+
+        // imageDimensions — fast header-only CGImageSource read, images only.
+        if self.previewKind == .image,
+           let src   = CGImageSourceCreateWithURL(url as CFURL, nil),
+           let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any],
+           let w     = props[kCGImagePropertyPixelWidth]  as? Int,
+           let h     = props[kCGImagePropertyPixelHeight] as? Int {
+            self.imageDimensions = "\(w) × \(h)"
+        } else {
+            self.imageDimensions = nil
+        }
     }
 
-    var imageDimensions: String? {
-        guard !isDirectory else { return nil }
-        let imageTypes = ["jpg", "jpeg", "png", "gif", "heic", "tiff", "bmp", "webp"]
-        let ext = url.pathExtension.lowercased()
-        guard imageTypes.contains(ext) else { return nil }
-        guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
-              let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any],
-              let w = props[kCGImagePropertyPixelWidth] as? Int,
-              let h = props[kCGImagePropertyPixelHeight] as? Int
-        else { return nil }
-        return "\(w) × \(h)"
-    }
-
-    func hash(into hasher: inout Hasher) {
-        hasher.combine(url)
-    }
-
-    static func == (lhs: FileItem, rhs: FileItem) -> Bool {
-        lhs.url == rhs.url
-    }
+    func hash(into hasher: inout Hasher) { hasher.combine(url) }
+    static func == (lhs: FileItem, rhs: FileItem) -> Bool { lhs.url == rhs.url }
 }

@@ -20,7 +20,7 @@ struct LevelListView: View {
             Divider()
             listBody
         }
-        .background(Color(NSColor.windowBackgroundColor))
+        .background(Color.clear)
         .background(WindowMouseTracker(level: level, model: model))
     }
 
@@ -214,7 +214,8 @@ private struct OnboardingEmptyView: View {
             }
             .frame(maxWidth: .infinity)
         }
-        .onAppear { pulse = true }
+        .onAppear  { pulse = true  }
+        .onDisappear { pulse = false }
     }
 }
 
@@ -234,7 +235,7 @@ struct LevelListBody: View {
     var onResizeDrag: ((CGSize) -> Void)?
     var onResizeEnded: (() -> Void)?
 
-    @AppStorage("rowDensity") private var densityRaw: String = RowDensity.medium.rawValue
+    @AppStorage(UDKey.rowDensity) private var densityRaw: String = RowDensity.medium.rawValue
     private var density: RowDensity { RowDensity(rawValue: densityRaw) ?? .medium }
 
     private var state: CascadeModel.Level? {
@@ -252,7 +253,7 @@ struct LevelListBody: View {
     }
 
     private var showFooter: Bool {
-        UserDefaults.standard.object(forKey: "showFooterBar") as? Bool ?? true
+        UserDefaults.standard.object(forKey: UDKey.showFooterBar) as? Bool ?? true
     }
 
     // Whether the footer (and embedded grip) will be shown.
@@ -288,7 +289,7 @@ struct LevelListBody: View {
                     .padding(.bottom, 6)
             }
         }
-        .background(Color(NSColor.windowBackgroundColor))
+        .background(Color.clear)
         .background(WindowMouseTracker(level: level, model: model))
         .onChange(of: model.focusSearchLevel) { val in
             guard val == level else { return }
@@ -403,7 +404,7 @@ struct LevelListBody: View {
             }
         }
         .padding(.vertical, 4)
-        .background(Color(NSColor.windowBackgroundColor))
+        .background(Color.clear)
     }
 
     private func formatSize(_ bytes: Int64) -> String {

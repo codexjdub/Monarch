@@ -1,4 +1,49 @@
 import Foundation
+import AppKit
+
+// MARK: - UserDefaults key constants
+//
+// All UserDefaults keys in one place. The hotkey keys (kHotkeyKeyCodeKey etc.)
+// live in HotkeyManager.swift because they're tightly coupled to that subsystem.
+
+enum UDKey {
+    static let appearanceMode  = "appearanceMode"
+    static let rowDensity      = "rowDensity"
+    static let showFooterBar   = "showFooterBar"
+    static let sortOrder       = "sortOrder"
+    static let sortDescending  = "sortDescending"
+    static let showHiddenFiles = "showHiddenFiles"
+    static let popoverWidth    = "popoverWidth"
+    static let popoverHeight   = "popoverHeight"
+}
+
+// MARK: - Appearance mode
+
+enum AppearanceMode: String, CaseIterable {
+    case system, light, dark
+
+    var label: String {
+        switch self {
+        case .system: return "System"
+        case .light:  return "Light"
+        case .dark:   return "Dark"
+        }
+    }
+
+    var nsAppearance: NSAppearance? {
+        switch self {
+        case .system: return nil
+        case .light:  return NSAppearance(named: .aqua)
+        case .dark:   return NSAppearance(named: .darkAqua)
+        }
+    }
+}
+
+extension UserDefaults {
+    @objc dynamic var appearanceMode: String {
+        return string(forKey: UDKey.appearanceMode) ?? AppearanceMode.system.rawValue
+    }
+}
 
 class Settings {
     static let shared = Settings()

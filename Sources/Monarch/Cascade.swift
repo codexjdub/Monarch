@@ -28,6 +28,145 @@ final class PeekNSWindow: NSWindow {
     override var canBecomeMain: Bool { false }
 }
 
+// MARK: - Peek Window Manager
+//
+// Owns the window registry and all AppKit window-creation/animation logic.
+// CascadeModel calls through here; it retains ownership of level state,
+// watchers, focus, and search state.
+
+@MainActor
+final class PeekWindowManager {
+
+    let defaultSize = NSSize(width: 320, height: 440)
+    private let peekAnimationDuration: TimeInterval = 0.20
+    private var windows: [Int: PeekNSWindow] = [:]
+
+    // MARK: Window lifecycle
+
+    func present(atLevel level: Int, anchor: NSRect, size: NSSize, content: AnyView) {
+        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(anchor.origin) })
+                        ?? NSScreen.main
+                        ?? NSScreen.screens.first else { return }
+
+        var origin = NSPoint(x: anchor.maxX + 2, y: anchor.maxY - size.height)
+        if origin.x + size.width > screen.visibleFrame.maxX {
+            origin.x = anchor.minX - size.width - 2
+        }
+        if origin.y < screen.visibleFrame.minY + 8 {
+            origin.y = screen.visibleFrame.minY + 8
+        }
+        if origin.y + size.height > screen.visibleFrame.maxY {
+            origin.y = screen.visibleFrame.maxY - size.height
+        }
+
+        let win = PeekNSWindow(
+            contentRect: NSRect(origin: origin, size: size),
+            styleMask: [.borderless],
+            backing: .buffered, defer: false
+        )
+        win.isOpaque = false
+        win.backgroundColor = .clear
+        win.hasShadow = true
+        win.level = .popUpMenu
+        win.isReleasedWhenClosed = false
+        win.collectionBehavior = [.transient, .ignoresCycle]
+        win.appearance = AppearanceMode(
+            rawValue: UserDefaults.standard.string(forKey: UDKey.appearanceMode) ?? ""
+        )?.nsAppearance
+
+        let visualEffect = NSVisualEffectView()
+        visualEffect.material = .sidebar
+        visualEffect.blendingMode = .behindWindow
+        visualEffect.state = .active
+        visualEffect.wantsLayer = true
+        visualEffect.layer?.cornerRadius = 10
+        visualEffect.layer?.masksToBounds = true
+        visualEffect.layer?.borderWidth = 0.5
+        visualEffect.layer?.borderColor = NSColor.separatorColor.cgColor
+
+        let hc = NSHostingController(rootView: content)
+        hc.view.translatesAutoresizingMaskIntoConstraints = false
+        hc.view.wantsLayer = true
+        hc.view.layer?.backgroundColor = NSColor.clear.cgColor
+        visualEffect.addSubview(hc.view)
+        NSLayoutConstraint.activate([
+            hc.view.leadingAnchor.constraint(equalTo: visualEffect.leadingAnchor),
+            hc.view.trailingAnchor.constraint(equalTo: visualEffect.trailingAnchor),
+            hc.view.topAnchor.constraint(equalTo: visualEffect.topAnchor),
+            hc.view.bottomAnchor.constraint(equalTo: visualEffect.bottomAnchor),
+        ])
+        win.contentView = visualEffect
+
+        // Animate in: slide up 6pt + fade from 0 → 1 over 120ms.
+        let finalFrame = NSRect(origin: origin, size: size)
+        let startFrame = NSRect(x: origin.x, y: origin.y - 6,
+                                width: size.width, height: size.height)
+        win.setFrame(startFrame, display: false)
+        win.alphaValue = 0
+        win.orderFront(nil)
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = peekAnimationDuration
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            win.animator().alphaValue = 1
+            win.animator().setFrame(finalFrame, display: true)
+        }
+        windows[level] = win
+    }
+
+    func close(level: Int) {
+        windows[level]?.close()
+        windows[level] = nil
+    }
+
+    /// All level keys strictly above `minLevel`, unsorted.
+    func levels(greaterThan minLevel: Int) -> [Int] {
+        windows.keys.filter { $0 > minLevel }
+    }
+
+    // MARK: Preview sizing
+
+    /// Compute a sensible window size for a file preview based on its content.
+    static func previewSize(for url: URL, kind: PreviewKind) -> NSSize {
+        let minW: CGFloat = 280, maxW: CGFloat = 800
+        let minH: CGFloat = 200, maxH: CGFloat = 700
+        let chromeH: CGFloat = 34  // header bar height
+
+        switch kind {
+        case .image:
+            if let img = NSImage(contentsOf: url), img.size.width > 0, img.size.height > 0 {
+                let size = fit(aspect: img.size, minW: minW, maxW: maxW, minH: minH, maxH: maxH - chromeH)
+                return NSSize(width: size.width, height: size.height + chromeH)
+            }
+            return NSSize(width: 520, height: 400)
+        case .pdf:
+            if let doc = PDFDocument(url: url), let page = doc.page(at: 0) {
+                let bounds = page.bounds(for: .mediaBox)
+                let size = fit(aspect: bounds.size, minW: minW, maxW: maxW, minH: minH, maxH: maxH - chromeH)
+                return NSSize(width: size.width, height: size.height + chromeH)
+            }
+            return NSSize(width: 520, height: 600)
+        case .markdown, .text:
+            return NSSize(width: 520, height: 600)
+        case .quicklook:
+            return NSSize(width: 640, height: 780)
+        case .video:
+            return NSSize(width: 720, height: 480)
+        case .audio:
+            return NSSize(width: 480, height: 140)
+        }
+    }
+
+    private static func fit(aspect: NSSize, minW: CGFloat, maxW: CGFloat,
+                             minH: CGFloat, maxH: CGFloat) -> NSSize {
+        let ratio = aspect.width / aspect.height
+        var w = maxW; var h = w / ratio
+        if h > maxH { h = maxH; w = h * ratio }
+        if w < minW { w = minW; h = w / ratio }
+        if h < minH { h = minH; w = h * ratio }
+        return NSSize(width: min(max(w, minW), maxW), height: min(max(h, minH), maxH))
+    }
+}
+
 // MARK: - Cascade Model
 //
 // The single source of truth for the whole cascade UI.
@@ -134,9 +273,8 @@ final class CascadeModel: ObservableObject {
     /// Wired by StatusItemController to call store.remove(_:).
     var onRemoveRoot: ((URL) -> Void)?
 
-    // Peek window registry (levels 1+). Level 0 is the NSPopover, not owned here.
-    private var peekWindows: [Int: PeekNSWindow] = [:]
-    private let peekSize = NSSize(width: 320, height: 440)
+    // Peek window manager (levels 1+). Level 0 is the NSPopover, not owned here.
+    private let peekManager = PeekWindowManager()
 
     // FSEvents watchers, one per .folder level (including level 0 roots).
     private var watchers: [Int: [FolderWatcher]] = [:]
@@ -519,13 +657,13 @@ final class CascadeModel: ObservableObject {
         installWatcher(forLevel: level, url: folder)
 
         let content = AnyView(LevelListView(level: level, model: self))
-        presentPeek(atLevel: level, parentIndex: parentIndex, size: peekSize, content: content)
+        presentPeek(atLevel: level, parentIndex: parentIndex, size: peekManager.defaultSize, content: content)
     }
 
     private func openPreviewPeek(atLevel level: Int, url: URL, kind: PreviewKind, parentIndex: Int) {
         closePeeks(atLevelsGreaterThan: level - 1)
 
-        let size = CascadeModel.previewSize(for: url, kind: kind)
+        let size = PeekWindowManager.previewSize(for: url, kind: kind)
         let state = Level(source: url, content: .preview(kind: kind, url: url))
         if levels.count == level {
             levels.append(state)
@@ -544,107 +682,8 @@ final class CascadeModel: ObservableObject {
     }
 
     private func presentPeek(atLevel level: Int, parentIndex: Int, size: NSSize, content: AnyView) {
-        // Position the new peek window from the parent row's screen frame.
         let anchor = levels[level - 1].rowFrames[parentIndex] ?? .zero
-        let screen = NSScreen.screens.first(where: { $0.frame.contains(anchor.origin) })
-                  ?? NSScreen.main
-                  ?? NSScreen.screens.first!
-
-        var origin = NSPoint(x: anchor.maxX + 2, y: anchor.maxY - size.height)
-        if origin.x + size.width > screen.visibleFrame.maxX {
-            origin.x = anchor.minX - size.width - 2
-        }
-        if origin.y < screen.visibleFrame.minY + 8 {
-            origin.y = screen.visibleFrame.minY + 8
-        }
-        if origin.y + size.height > screen.visibleFrame.maxY {
-            origin.y = screen.visibleFrame.maxY - size.height
-        }
-
-        let win = PeekNSWindow(
-            contentRect: NSRect(origin: origin, size: size),
-            styleMask: [.borderless],
-            backing: .buffered, defer: false
-        )
-        win.isOpaque = false
-        win.backgroundColor = .clear
-        win.hasShadow = true
-        win.level = .popUpMenu
-        win.isReleasedWhenClosed = false
-        win.collectionBehavior = [.transient, .ignoresCycle]
-
-        let hc = NSHostingController(rootView: content)
-        hc.view.wantsLayer = true
-        hc.view.layer?.cornerRadius = 10
-        hc.view.layer?.masksToBounds = true
-        hc.view.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
-        hc.view.layer?.borderWidth = 0.5
-        hc.view.layer?.borderColor = NSColor.separatorColor.cgColor
-
-        win.contentView = hc.view
-
-        // Animate in: slide up 6pt + fade from 0 → 1 over 120ms.
-        let finalFrame = NSRect(origin: origin, size: size)
-        let startFrame = NSRect(x: origin.x, y: origin.y - 6,
-                                width: size.width, height: size.height)
-        win.setFrame(startFrame, display: false)
-        win.alphaValue = 0
-        win.orderFront(nil)
-        NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.20
-            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            win.animator().alphaValue = 1
-            win.animator().setFrame(finalFrame, display: true)
-        }
-        peekWindows[level] = win
-    }
-
-    /// Aspect-sized preview window sizing.
-    /// - Images: load NSImage and fit into a 280...800 × 200...700 bounding box.
-    /// - PDFs: first page bounds, same clamp.
-    /// - Text/Markdown: fixed 520 × 600.
-    static func previewSize(for url: URL, kind: PreviewKind) -> NSSize {
-        let minW: CGFloat = 280, maxW: CGFloat = 800
-        let minH: CGFloat = 200, maxH: CGFloat = 700
-        let chromeH: CGFloat = 34  // header
-
-        switch kind {
-        case .image:
-            if let img = NSImage(contentsOf: url), img.size.width > 0, img.size.height > 0 {
-                let size = fit(aspect: img.size, minW: minW, maxW: maxW, minH: minH, maxH: maxH - chromeH)
-                return NSSize(width: size.width, height: size.height + chromeH)
-            }
-            return NSSize(width: 520, height: 400)
-        case .pdf:
-            if let doc = PDFDocument(url: url), let page = doc.page(at: 0) {
-                let bounds = page.bounds(for: .mediaBox)
-                let size = fit(aspect: bounds.size, minW: minW, maxW: maxW, minH: minH, maxH: maxH - chromeH)
-                return NSSize(width: size.width, height: size.height + chromeH)
-            }
-            return NSSize(width: 520, height: 600)
-        case .markdown, .text:
-            return NSSize(width: 520, height: 600)
-        case .quicklook:
-            // Roughly letter-paper aspect — fits docx/pages/epub nicely.
-            return NSSize(width: 640, height: 780)
-        case .video:
-            return NSSize(width: 720, height: 480)
-        case .audio:
-            return NSSize(width: 480, height: 140)
-        }
-    }
-
-    private static func fit(aspect: NSSize, minW: CGFloat, maxW: CGFloat, minH: CGFloat, maxH: CGFloat) -> NSSize {
-        let ratio = aspect.width / aspect.height
-        // Start at maxW, derive height.
-        var w = maxW
-        var h = w / ratio
-        if h > maxH { h = maxH; w = h * ratio }
-        if w < minW { w = minW; h = w / ratio }
-        if h < minH { h = minH; w = h * ratio }
-        w = min(max(w, minW), maxW)
-        h = min(max(h, minH), maxH)
-        return NSSize(width: w, height: h)
+        peekManager.present(atLevel: level, anchor: anchor, size: size, content: content)
     }
 
     private func scheduleClose(deeperThan level: Int) {
@@ -669,10 +708,8 @@ final class CascadeModel: ObservableObject {
     private func closePeeks(atLevelsGreaterThan level: Int) {
         // Defensive clamp: never touch level 0.
         let minLevel = max(level, 0)
-        let ls = peekWindows.keys.filter { $0 > minLevel }.sorted(by: >)
-        for l in ls {
-            peekWindows[l]?.close()
-            peekWindows[l] = nil
+        for l in peekManager.levels(greaterThan: minLevel).sorted(by: >) {
+            peekManager.close(level: l)
             removeWatchers(forLevel: l)
         }
         // Trim model levels beyond minLevel (keep levels[0...minLevel]).
@@ -742,10 +779,10 @@ final class CascadeModel: ObservableObject {
         let contents = (try? fm.contentsOfDirectory(at: folder,
                                                     includingPropertiesForKeys: keys,
                                                     options: [])) ?? []
-        let sortOrder  = FileSortOrder(rawValue: UserDefaults.standard.string(forKey: "sortOrder") ?? "") ?? .name
-        let showHidden = UserDefaults.standard.bool(forKey: "showHiddenFiles")
+        let sortOrder  = FileSortOrder(rawValue: UserDefaults.standard.string(forKey: UDKey.sortOrder) ?? "") ?? .name
+        let showHidden = UserDefaults.standard.bool(forKey: UDKey.showHiddenFiles)
         let defaultDescending: Bool = (sortOrder == .dateModified || sortOrder == .dateCreated)
-        let descending = UserDefaults.standard.object(forKey: "sortDescending") as? Bool ?? defaultDescending
+        let descending = UserDefaults.standard.object(forKey: UDKey.sortDescending) as? Bool ?? defaultDescending
 
         // Sum direct-child file sizes from the already-fetched resource values.
         let totalSize: Int64 = contents.reduce(0) { sum, url in
@@ -873,6 +910,12 @@ final class RowFrameReporterNSView: NSView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        if window == nil {
+            // View is leaving its window — remove all observers immediately,
+            // even if observedClip's weak ref has already gone nil.
+            NotificationCenter.default.removeObserver(self)
+            observedClip = nil
+        }
         attachScrollObserverIfNeeded()
         reportIfReady()
     }
