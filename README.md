@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="Design/AppIcon.appiconset/icon_128x128@2x.png" width="128" alt="Monarch icon">
+</p>
+
 # Monarch
 
 A native macOS menu bar app for cascading folder navigation. Click the menu bar icon, see your configured root folders. Hover any folder to peek inside — another peek opens beside it. Keep hovering to drill deeper. Click a file to open it; click a folder to reveal it in Finder.
