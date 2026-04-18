@@ -8,18 +8,22 @@ final class PreferencesWindowController: NSObject {
     static let shared = PreferencesWindowController()
 
     private var window: NSWindow?
+    private var store: ShortcutStore?
 
-    func show() {
+    func show(store: ShortcutStore) {
+        self.store = store
         if let win = window {
             win.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
         }
-        let hosting = NSHostingController(rootView: PreferencesView())
+        let hosting = NSHostingController(rootView: PreferencesView(store: store))
+        hosting.sizingOptions = []
         let win = NSWindow(contentViewController: hosting)
         win.title = "Monarch Preferences"
-        win.styleMask = [.titled, .closable]
-        win.setContentSize(NSSize(width: 440, height: 260))
+        win.styleMask = [.titled, .closable, .resizable]
+        win.setContentSize(NSSize(width: 440, height: 460))
+        win.contentMinSize = NSSize(width: 380, height: 340)
         win.isReleasedWhenClosed = false
         win.center()
         self.window = win
@@ -31,6 +35,8 @@ final class PreferencesWindowController: NSObject {
 // MARK: - Preferences SwiftUI View
 
 struct PreferencesView: View {
+    @ObservedObject var store: ShortcutStore
+
     @AppStorage(kHotkeyEnabledKey) private var hotkeyEnabled: Bool = true
     @AppStorage(kHotkeyDisplayKey) private var hotkeyDisplay: String = defaultHotkeyDisplay
 
@@ -38,41 +44,102 @@ struct PreferencesView: View {
     @State private var launchAtLogin: Bool = PreferencesView.readLaunchAtLogin()
 
     var body: some View {
-        Form {
-            Section {
-                HStack {
-                    Toggle(isOn: $hotkeyEnabled) {
-                        Text("Global hotkey")
+        VStack(alignment: .leading, spacing: 0) {
+            // Shortcuts reorder section
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Shortcuts")
+                    .font(.headline)
+
+                if store.shortcuts.isEmpty {
+                    Text("No shortcuts yet. Click ··· in the menu bar to add one.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(8)
+                } else {
+                    List {
+                        ForEach(store.shortcuts, id: \.self) { url in
+                            HStack(spacing: 8) {
+                                Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                                    .resizable()
+                                    .frame(width: 18, height: 18)
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(url.lastPathComponent)
+                                        .lineLimit(1)
+                                    Text(url.deletingLastPathComponent().path)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+                                Spacer()
+                                Button {
+                                    store.remove(url)
+                                } label: {
+                                    Image(systemName: "minus.circle.fill")
+                                        .foregroundStyle(.red.opacity(0.8))
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            .padding(.vertical, 2)
+                        }
+                        .onMove { from, to in
+                            guard let src = from.first else { return }
+                            // SwiftUI onMove gives destination index in the shifted array
+                            let dst = to > src ? to - 1 : to
+                            store.move(from: src, to: dst)
+                        }
                     }
-                    .toggleStyle(.checkbox)
-                    Spacer()
-                    HotkeyRecorderView()
-                        .disabled(!hotkeyEnabled)
-                        .opacity(hotkeyEnabled ? 1 : 0.5)
-                }
-                .onChange(of: hotkeyEnabled) { _ in
-                    HotkeyManager.shared.installFromDefaults()
-                }
+                    .listStyle(.inset)
+                    .frame(maxHeight: .infinity)
 
-                Text("Press this combination anywhere to open Monarch.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    Text("Drag rows to reorder. Changes appear immediately in the menu bar.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
+            .padding(.horizontal, 20)
+            .padding(.top, 20)
+            .layoutPriority(1)
 
-            Divider().padding(.vertical, 4)
+            Divider().padding(.vertical, 12)
 
-            Section {
-                Toggle("Launch at login", isOn: $launchAtLogin)
-                    .onChange(of: launchAtLogin) { newValue in
-                        PreferencesView.writeLaunchAtLogin(newValue)
+            Form {
+                Section {
+                    HStack {
+                        Toggle(isOn: $hotkeyEnabled) {
+                            Text("Global hotkey")
+                        }
+                        .toggleStyle(.checkbox)
+                        Spacer()
+                        HotkeyRecorderView()
+                            .disabled(!hotkeyEnabled)
+                            .opacity(hotkeyEnabled ? 1 : 0.5)
                     }
-                Toggle("Show item count and size footer", isOn: $showFooterBar)
-            }
+                    .onChange(of: hotkeyEnabled) { _ in
+                        HotkeyManager.shared.installFromDefaults()
+                    }
 
-            Spacer()
+                    Text("Press this combination anywhere to open Monarch.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Divider().padding(.vertical, 4)
+
+                Section {
+                    Toggle("Launch at login", isOn: $launchAtLogin)
+                        .onChange(of: launchAtLogin) { newValue in
+                            PreferencesView.writeLaunchAtLogin(newValue)
+                        }
+                    Toggle("Show item count and size footer", isOn: $showFooterBar)
+                }
+
+                Spacer()
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 20)
         }
-        .padding(20)
-        .frame(width: 440, height: 260)
+        .frame(minWidth: 380, minHeight: 340)
     }
 
     // MARK: - Launch at Login (SMAppService, macOS 13+)

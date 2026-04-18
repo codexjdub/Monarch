@@ -145,39 +145,35 @@ struct CascadeRootView: View {
     let onResizeEnded: () -> Void
 
     var body: some View {
-        ZStack(alignment: .bottomTrailing) {
-            VStack(spacing: 0) {
-                // Top bar with settings button (replaces LevelListView's header for level 0)
-                HStack {
-                    if let url = Bundle.main.url(forResource: "AppIconArtwork", withExtension: "png"),
-                       let img = NSImage(contentsOf: url) {
-                        Image(nsImage: img)
-                            .resizable()
-                            .frame(width: 20, height: 20)
-                    }
-                    Text("Monarch").font(.headline)
-                    Spacer()
-                    Button(action: onSettingsTapped) {
-                        Image(systemName: "ellipsis.circle").font(.system(size: 15))
-                    }
-                    .buttonStyle(.plain)
+        VStack(spacing: 0) {
+            // Top bar with settings button (replaces LevelListView's header for level 0)
+            HStack {
+                if let url = Bundle.main.url(forResource: "AppIconArtwork", withExtension: "png"),
+                   let img = NSImage(contentsOf: url) {
+                    Image(nsImage: img)
+                        .resizable()
+                        .frame(width: 20, height: 20)
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-
-                Divider()
-
-                // The level 0 list, without its own header (we provided one above)
-                LevelListBody(level: 0, model: model)
+                Text("Monarch").font(.headline)
+                Spacer()
+                Button(action: onSettingsTapped) {
+                    Image(systemName: "ellipsis.circle").font(.system(size: 15))
+                }
+                .buttonStyle(.plain)
             }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
 
-            ResizeGripSwiftUI(
-                onBegan: onResizeBegan,
-                onChanged: onResizeDrag,
-                onEnded: onResizeEnded
+            Divider()
+
+            // The level 0 list — resize grip is embedded in the footer row.
+            LevelListBody(
+                level: 0,
+                model: model,
+                onResizeBegan: onResizeBegan,
+                onResizeDrag: onResizeDrag,
+                onResizeEnded: onResizeEnded
             )
-            .padding(.trailing, 6)
-            .padding(.bottom, 6)
         }
     }
 }
@@ -206,10 +202,10 @@ private struct OnboardingEmptyView: View {
                 Image(systemName: "folder.badge.plus")
                     .font(.system(size: 30))
                     .foregroundStyle(.tertiary)
-                Text("No folders yet")
+                Text("Nothing here yet")
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(.secondary)
-                Text("Click ··· to add your first folder")
+                Text("Click ··· to add a folder or file")
                     .font(.system(size: 11))
                     .foregroundStyle(.tertiary)
                     .multilineTextAlignment(.center)
@@ -233,6 +229,11 @@ struct LevelListBody: View {
     @StateObject private var selectionState = SelectionState()
     @FocusState private var searchFocused: Bool
 
+    // Resize callbacks — only provided for level 0 from CascadeRootView.
+    var onResizeBegan: (() -> Void)?
+    var onResizeDrag: ((CGSize) -> Void)?
+    var onResizeEnded: (() -> Void)?
+
     private var state: CascadeModel.Level? {
         model.levels.indices.contains(level) ? model.levels[level] : nil
     }
@@ -251,21 +252,37 @@ struct LevelListBody: View {
         UserDefaults.standard.object(forKey: "showFooterBar") as? Bool ?? true
     }
 
+    // Whether the footer (and embedded grip) will be shown.
+    private func willShowFooter(state: CascadeModel.Level) -> Bool {
+        showFooter && !state.items.isEmpty
+    }
+
     var body: some View {
-        VStack(spacing: 0) {
-            if model.searchVisible[level] == true {
-                searchBarView
-                Divider()
+        ZStack(alignment: .bottomTrailing) {
+            VStack(spacing: 0) {
+                if model.searchVisible[level] == true {
+                    searchBarView
+                    Divider()
+                }
+                if let state {
+                    if displayItems.isEmpty {
+                        emptyView
+                    } else {
+                        scrollView(state: state)
+                    }
+                    if willShowFooter(state: state) {
+                        footerView(state: state)
+                    }
+                }
             }
-            if let state {
-                if displayItems.isEmpty {
-                    emptyView
-                } else {
-                    scrollView(state: state)
-                }
-                if showFooter && !state.items.isEmpty {
-                    footerView(state: state)
-                }
+
+            // Fallback grip: shown only when the footer is hidden (empty list or
+            // footer pref off) so the popover can still be resized.
+            if let state = state, !willShowFooter(state: state),
+               let onBegan = onResizeBegan, let onDrag = onResizeDrag, let onEnded = onResizeEnded {
+                ResizeGripSwiftUI(onBegan: onBegan, onChanged: onDrag, onEnded: onEnded)
+                    .padding(.trailing, 6)
+                    .padding(.bottom, 6)
             }
         }
         .background(Color(NSColor.windowBackgroundColor))
@@ -371,14 +388,18 @@ struct LevelListBody: View {
         }()
 
         Divider()
-        HStack {
+        HStack(spacing: 0) {
             Spacer()
             Text(label)
                 .font(.system(size: 11))
                 .foregroundStyle(.tertiary)
             Spacer()
+            if let onBegan = onResizeBegan, let onDrag = onResizeDrag, let onEnded = onResizeEnded {
+                ResizeGripSwiftUI(onBegan: onBegan, onChanged: onDrag, onEnded: onEnded)
+                    .padding(.trailing, 8)
+            }
         }
-        .padding(.vertical, 5)
+        .padding(.vertical, 4)
         .background(Color(NSColor.windowBackgroundColor))
     }
 
@@ -481,8 +502,8 @@ struct ResizeGripSwiftUI: View {
         ZStack {
             Color.clear.contentShape(Rectangle())
             Path { p in
-                let r: CGFloat = 1.8
-                let step: CGFloat = 6
+                let r: CGFloat = 1.4
+                let step: CGFloat = 4.5
                 let pts: [CGPoint] = [
                     CGPoint(x: step * 3, y: step * 1),
                     CGPoint(x: step * 3, y: step * 2),
@@ -497,7 +518,7 @@ struct ResizeGripSwiftUI: View {
             }
             .fill(Color.secondary.opacity(0.7))
         }
-        .frame(width: 24, height: 24)
+        .frame(width: 18, height: 18)
         .onHover { inside in
             if inside { NSCursor.crosshair.push() } else { NSCursor.pop() }
         }

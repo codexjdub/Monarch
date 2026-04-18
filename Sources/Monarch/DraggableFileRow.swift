@@ -359,6 +359,14 @@ class DraggableNSView: NSView, NSDraggingSource {
                          keyEquivalent: "").target = self
         }
 
+        // Rename (single item only)
+        if urlsToAct.count == 1 {
+            menu.addItem(.separator())
+            menu.addItem(withTitle: "Rename…",
+                         action: #selector(renameAction),
+                         keyEquivalent: "").target = self
+        }
+
         menu.addItem(.separator())
         let trashTitle = urlsToAct.count > 1 ? "Move \(urlsToAct.count) Items to Trash" : "Move to Trash"
         let trashItem = menu.addItem(withTitle: trashTitle, action: #selector(moveToTrash), keyEquivalent: "\u{8}") // backspace
@@ -492,6 +500,34 @@ class DraggableNSView: NSView, NSDraggingSource {
 
     @objc private func removeFromRoot() {
         removeFromRootHandler?()
+    }
+
+    @objc private func renameAction() {
+        guard let item = fileItem else { return }
+        let alert = NSAlert()
+        alert.messageText = "Rename"
+        alert.informativeText = "Enter a new name for \"\(item.name)\"."
+        alert.addButton(withTitle: "Rename")
+        alert.addButton(withTitle: "Cancel")
+
+        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 22))
+        input.stringValue = item.name
+        alert.accessoryView = input
+        alert.window.initialFirstResponder = input
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let newName = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !newName.isEmpty, newName != item.name else { return }
+
+        let dest = item.url.deletingLastPathComponent().appendingPathComponent(newName)
+        do {
+            try FileManager.default.moveItem(at: item.url, to: dest)
+        } catch {
+            let err = NSAlert()
+            err.messageText = "Couldn't Rename"
+            err.informativeText = error.localizedDescription
+            err.runModal()
+        }
     }
 
     @objc private func newFolderInsideAction() {

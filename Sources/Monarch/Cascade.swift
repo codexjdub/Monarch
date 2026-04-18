@@ -126,7 +126,7 @@ final class CascadeModel: ObservableObject {
     @Published var focusSearchLevel: Int? = nil
 
     // Collaborators
-    private let folderStore: FolderStore
+    private let shortcutStore: ShortcutStore
     private var storeSub: AnyCancellable?
     let onDismiss: () -> Void
 
@@ -176,11 +176,11 @@ final class CascadeModel: ObservableObject {
 
     // MARK: - Init
 
-    init(folderStore: FolderStore, onDismiss: @escaping () -> Void) {
-        self.folderStore = folderStore
+    init(folderStore: ShortcutStore, onDismiss: @escaping () -> Void) {
+        self.shortcutStore = folderStore
         self.onDismiss = onDismiss
         rebuildLevel0()
-        storeSub = folderStore.$folders
+        storeSub = shortcutStore.$shortcuts
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.rebuildLevel0() }
         PinStore.shared.onPinsChanged = { [weak self] folder in
@@ -196,24 +196,22 @@ final class CascadeModel: ObservableObject {
     }
 
     private func rebuildLevel0() {
-        let items = folderStore.folders.map { FileItem(url: $0) }
+        let items = shortcutStore.shortcuts.map { FileItem(url: $0) }
         if levels.isEmpty {
             levels = [Level(source: nil, content: .folder(items: items, sections: [], rowFrames: [:]))]
         } else {
             levels[0].setContents(items, [])
         }
-        // Level 0's "items" are the configured root folders. Watch each so
-        // that e.g. adding a file inside a root refreshes that root's tree
-        // when/if the user drills in. We also watch level 0 itself so if a
-        // root folder is deleted on disk we notice (FolderStore separately).
+        // Watch directory shortcuts so drilling in reflects live changes.
+        // File shortcuts don't need watching (no folder listing to refresh).
         installWatchersForLevel0()
     }
 
     private func installWatchersForLevel0() {
         var ws: [FolderWatcher] = []
-        for root in folderStore.folders {
-            ws.append(FolderWatcher(url: root) { [weak self] in
-                self?.folderDidChange(url: root)
+        for shortcut in shortcutStore.shortcuts where shortcut.hasDirectoryPath {
+            ws.append(FolderWatcher(url: shortcut) { [weak self] in
+                self?.folderDidChange(url: shortcut)
             })
         }
         watchers[0] = ws
@@ -709,12 +707,16 @@ final class CascadeModel: ObservableObject {
         focus = Focus(level: 0, index: -1)
     }
 
-    // Convenience: the URL of the focused root (level 0), if any.
-    var focusedRootFolder: URL? {
+    // Convenience: the URL of the focused level-0 shortcut, if any.
+    var focusedRootShortcut: URL? {
         guard focus.level == 0,
               levels.indices.contains(0),
               levels[0].items.indices.contains(focus.index) else { return nil }
         return levels[0].items[focus.index].url
+    }
+
+    func moveRoot(from: Int, to: Int) {
+        shortcutStore.move(from: from, to: to)
     }
 
     // MARK: - Folder loading

@@ -6,7 +6,7 @@ private let kPopoverHeight = "popoverHeight"
 
 @MainActor
 class StatusItemController: NSObject {
-    private let store: FolderStore
+    private let store: ShortcutStore
     private var statusItem: NSStatusItem
     private var popover = NSPopover()
     private var sizeAtResizeStart: NSSize = .zero
@@ -16,7 +16,7 @@ class StatusItemController: NSObject {
     private var dragBeginMonitor: Any?
     private var dragEndMonitor: Any?
 
-    init(store: FolderStore) {
+    init(store: ShortcutStore) {
         self.store = store
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         // onDismiss closes the whole UI. Passed a placeholder first; will replace below.
@@ -260,13 +260,13 @@ class StatusItemController: NSObject {
               let button = statusItem.button else { return }
 
         let menu = NSMenu()
-        menu.addItem(withTitle: "Add Folder…", action: #selector(addFolderAction), keyEquivalent: "")
+        menu.addItem(withTitle: "Add…", action: #selector(addShortcutAction), keyEquivalent: "")
             .target = self
 
-        if let folder = model.focusedRootFolder {
+        if let shortcut = model.focusedRootShortcut {
             menu.addItem(
-                withTitle: "Remove \"\(folder.lastPathComponent)\"",
-                action: #selector(removeCurrentFolder),
+                withTitle: "Remove \"\(shortcut.lastPathComponent)\"",
+                action: #selector(removeCurrentShortcut),
                 keyEquivalent: ""
             ).target = self
         }
@@ -309,14 +309,14 @@ class StatusItemController: NSObject {
     }
 
     @objc private func openPreferences() {
-        PreferencesWindowController.shared.show()
+        PreferencesWindowController.shared.show(store: store)
     }
 
-    @objc private func addFolderAction() {
+    @objc private func addShortcutAction() {
         popover.performClose(nil)
         let panel = NSOpenPanel()
-        panel.title = "Add a folder to Monarch"
-        panel.canChooseFiles = false
+        panel.title = "Add to Monarch"
+        panel.canChooseFiles = true
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = true
         panel.begin { [weak self] response in
@@ -327,9 +327,9 @@ class StatusItemController: NSObject {
         }
     }
 
-    @objc private func removeCurrentFolder() {
-        if let folder = model.focusedRootFolder {
-            store.remove(folder)
+    @objc private func removeCurrentShortcut() {
+        if let shortcut = model.focusedRootShortcut {
+            store.remove(shortcut)
         }
     }
 
