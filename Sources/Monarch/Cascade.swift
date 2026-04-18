@@ -70,6 +70,14 @@ final class CascadeModel: ObservableObject {
         ///   - file URL for .preview content
         let source: URL?
         var content: Content
+        /// Sum of direct-child file sizes (bytes). 0 for level 0 and preview levels.
+        var totalSize: Int64
+
+        init(source: URL?, content: Content, totalSize: Int64 = 0) {
+            self.source = source
+            self.content = content
+            self.totalSize = totalSize
+        }
 
         // Convenience accessors (return empty for preview levels).
         var items: [FileItem] {
@@ -85,10 +93,11 @@ final class CascadeModel: ObservableObject {
             return [:]
         }
         /// For .folder levels, swap in new items + sections without touching frames.
-        mutating func setContents(_ newItems: [FileItem], _ newSections: [Section]) {
+        mutating func setContents(_ newItems: [FileItem], _ newSections: [Section], totalSize: Int64? = nil) {
             if case .folder(_, _, let frames) = content {
                 content = .folder(items: newItems, sections: newSections, rowFrames: frames)
             }
+            if let totalSize { self.totalSize = totalSize }
         }
         /// For .folder levels, record a row's screen frame.
         mutating func setRowFrame(_ index: Int, _ frame: NSRect) {
@@ -111,6 +120,11 @@ final class CascadeModel: ObservableObject {
     /// backing out.
     @Published private(set) var pathIndices: [Int: Int] = [:]
 
+    // Search state
+    @Published var filterText: [Int: String] = [:]
+    @Published var searchVisible: [Int: Bool] = [:]
+    @Published var focusSearchLevel: Int? = nil
+
     // Collaborators
     private let folderStore: FolderStore
     private var storeSub: AnyCancellable?
@@ -131,6 +145,31 @@ final class CascadeModel: ObservableObject {
 
     private var pendingOpen:  DispatchWorkItem?
     private var pendingClose: DispatchWorkItem?
+
+    /// `true` while a cross-app drag is in flight. Suppresses tracking-area
+    /// exits so peek windows stay open until the drag lands or is cancelled.
+    var externalDragActive = false
+
+    // MARK: - Search
+
+    func showSearch(forLevel level: Int) {
+        searchVisible[level] = true
+        focusSearchLevel = level
+    }
+
+    func hideSearch(forLevel level: Int) {
+        searchVisible.removeValue(forKey: level)
+        filterText.removeValue(forKey: level)
+        if focusSearchLevel == level { focusSearchLevel = nil }
+    }
+
+    func setFilter(_ text: String, forLevel level: Int) {
+        if text.isEmpty {
+            filterText.removeValue(forKey: level)
+        } else {
+            filterText[level] = text
+        }
+    }
 
     // MARK: - Init
 
@@ -195,26 +234,17 @@ final class CascadeModel: ObservableObject {
     /// FSEvents fired for `url`. Reload any .folder levels whose source
     /// matches, preserving focus and path by URL (not index).
     private func folderDidChange(url: URL) {
-        for i in 0..<levels.count {
-            guard case .folder = levels[i].content else { continue }
-            let matches: Bool
-            if i == 0 {
-                // Level 0's source is nil; we update it only if the changed
-                // URL is one of its configured roots, since level 0 is the
-                // root list, not a folder listing.
-                matches = folderStore.folders.contains(url)
-                if matches {
-                    // Root's own contents changed, but level 0 shows the
-                    // *list of roots* — that comes from folderStore, not
-                    // disk. Nothing to reload for level 0 here.
-                    continue
-                }
-            } else {
-                matches = (levels[i].source == url)
-            }
-            if matches {
-                reloadLevelPreservingFocus(i)
-            }
+        // Snapshot matching indices BEFORE the loop. reloadLevelPreservingFocus
+        // can call closeDeeperThan → closePeeks → levels.removeLast(), which
+        // shrinks the array and would cause an index-out-of-bounds crash if we
+        // iterated live. Bounds-check again before each reload for safety.
+        let matchingIndices = (1..<levels.count).filter { i in
+            guard case .folder = levels[i].content else { return false }
+            return levels[i].source == url
+        }
+        for i in matchingIndices {
+            guard levels.indices.contains(i) else { continue }
+            reloadLevelPreservingFocus(i)
         }
     }
 
@@ -240,7 +270,7 @@ final class CascadeModel: ObservableObject {
         // Reload.
         let result = CascadeModel.loadFolder(src)
         let newItems = result.items
-        levels[level].setContents(result.items, result.sections)
+        levels[level].setContents(result.items, result.sections, totalSize: result.totalSize)
 
         // Restore focus.
         if let focusedURL, let newIdx = newItems.firstIndex(where: { $0.url == focusedURL }) {
@@ -265,7 +295,7 @@ final class CascadeModel: ObservableObject {
         for i in 1..<levels.count {
             guard case .folder = levels[i].content, let f = levels[i].source else { continue }
             let result = CascadeModel.loadFolder(f)
-            levels[i].setContents(result.items, result.sections)
+            levels[i].setContents(result.items, result.sections, totalSize: result.totalSize)
         }
     }
 
@@ -353,6 +383,7 @@ final class CascadeModel: ObservableObject {
     /// (and deeper) is scheduled. Re-entering parent within the grace period
     /// cancels the close.
     func mouseLeftWindow(level: Int) {
+        guard !externalDragActive else { return }
         pendingOpen?.cancel(); pendingOpen = nil
         if level > 0, let parentIdx = pathIndices[level - 1] {
             focus = Focus(level: level - 1, index: parentIdx)
@@ -371,7 +402,11 @@ final class CascadeModel: ObservableObject {
         guard levels.indices.contains(l) else { return }
         let n = levels[l].items.count
         guard n > 0 else { return }
-        focus = Focus(level: l, index: max(0, focus.index <= 0 ? 0 : focus.index - 1))
+        pendingOpen?.cancel(); pendingOpen = nil
+        pendingClose?.cancel(); pendingClose = nil
+        // No focus yet → ↑ jumps to last item; otherwise move up, clamped at 0.
+        let next = focus.index < 0 ? n - 1 : max(0, focus.index - 1)
+        focus = Focus(level: l, index: next)
     }
 
     func keyDown() {
@@ -379,7 +414,11 @@ final class CascadeModel: ObservableObject {
         guard levels.indices.contains(l) else { return }
         let n = levels[l].items.count
         guard n > 0 else { return }
-        focus = Focus(level: l, index: min(n - 1, focus.index < 0 ? 0 : focus.index + 1))
+        pendingOpen?.cancel(); pendingOpen = nil
+        pendingClose?.cancel(); pendingClose = nil
+        // No focus yet → ↓ jumps to first item; otherwise move down, clamped at end.
+        let next = focus.index < 0 ? 0 : min(n - 1, focus.index + 1)
+        focus = Focus(level: l, index: next)
     }
 
     func keyRight() { keyboardDrillIn() }
@@ -424,10 +463,14 @@ final class CascadeModel: ObservableObject {
     }
 
     private func keyboardDrillOut() {
+        pendingOpen?.cancel(); pendingOpen = nil
         let l = focus.level
-        if l == 0 { return }
-        let newLevel = l - 1
-        closeDeeperThan(newLevel)
+        if l == 0 { onDismiss(); return }
+        // If a preview is open one level deeper, ← closes just the preview
+        // and leaves focus on the current folder listing. If the deeper level
+        // is a folder peek (or nothing), ← collapses back to the parent.
+        let deeperIsPreview = levels.indices.contains(l + 1) && levels[l + 1].isPreview
+        closeDeeperThan(deeperIsPreview ? l : l - 1)
     }
 
     // MARK: - Spring-loaded folders (drag hover opens peek)
@@ -463,7 +506,7 @@ final class CascadeModel: ObservableObject {
         closePeeks(atLevelsGreaterThan: level - 1)
 
         let result = CascadeModel.loadFolder(folder)
-        let state = Level(source: folder, content: .folder(items: result.items, sections: result.sections, rowFrames: [:]))
+        let state = Level(source: folder, content: .folder(items: result.items, sections: result.sections, rowFrames: [:]), totalSize: result.totalSize)
         if levels.count == level {
             levels.append(state)
         } else if levels.count > level {
@@ -541,8 +584,20 @@ final class CascadeModel: ObservableObject {
         hc.view.layer?.borderColor = NSColor.separatorColor.cgColor
 
         win.contentView = hc.view
-        win.setFrame(NSRect(origin: origin, size: size), display: true)
+
+        // Animate in: slide up 6pt + fade from 0 → 1 over 120ms.
+        let finalFrame = NSRect(origin: origin, size: size)
+        let startFrame = NSRect(x: origin.x, y: origin.y - 6,
+                                width: size.width, height: size.height)
+        win.setFrame(startFrame, display: false)
+        win.alphaValue = 0
         win.orderFront(nil)
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.20
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            win.animator().alphaValue = 1
+            win.animator().setFrame(finalFrame, display: true)
+        }
         peekWindows[level] = win
     }
 
@@ -626,9 +681,14 @@ final class CascadeModel: ObservableObject {
         if levels.count > minLevel + 1 {
             levels.removeLast(levels.count - minLevel - 1)
         }
-        for k in pathIndices.keys where k >= minLevel {
+        // Keep pathIndices[minLevel] — it records which row at the surviving
+        // level opened the now-closed peek, needed for focus restoration.
+        for k in pathIndices.keys where k > minLevel {
             pathIndices[k] = nil
         }
+        // Clear search state for closed levels.
+        for k in filterText.keys where k > minLevel { filterText.removeValue(forKey: k) }
+        for k in searchVisible.keys where k > minLevel { searchVisible.removeValue(forKey: k) }
     }
 
     /// Click on a breadcrumb segment: collapse the cascade to that level
@@ -662,6 +722,7 @@ final class CascadeModel: ObservableObject {
     struct FolderContents {
         let items: [FileItem]
         let sections: [Section]
+        let totalSize: Int64
     }
 
     static func loadFolder(_ folder: URL) -> FolderContents {
@@ -675,6 +736,12 @@ final class CascadeModel: ObservableObject {
         let showHidden = UserDefaults.standard.bool(forKey: "showHiddenFiles")
         let defaultDescending: Bool = (sortOrder == .dateModified || sortOrder == .dateCreated)
         let descending = UserDefaults.standard.object(forKey: "sortDescending") as? Bool ?? defaultDescending
+
+        // Sum direct-child file sizes from the already-fetched resource values.
+        let totalSize: Int64 = contents.reduce(0) { sum, url in
+            let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+            return sum + Int64(size)
+        }
 
         let allSorted = contents
             .map { FileItem(url: $0) }
@@ -733,7 +800,7 @@ final class CascadeModel: ObservableObject {
 
         // No sections needed if there are no pins and no recent.
         if pinnedItems.isEmpty && recentItems.isEmpty {
-            return FolderContents(items: allSorted, sections: [])
+            return FolderContents(items: allSorted, sections: [], totalSize: totalSize)
         }
 
         // Compose flat item list and build section descriptors.
@@ -754,7 +821,7 @@ final class CascadeModel: ObservableObject {
         items.append(contentsOf: remainingItems)
         sections.append(Section(title: "All", range: start..<items.count))
 
-        return FolderContents(items: items, sections: sections)
+        return FolderContents(items: items, sections: sections, totalSize: totalSize)
     }
 }
 

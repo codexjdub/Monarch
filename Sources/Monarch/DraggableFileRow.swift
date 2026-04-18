@@ -344,6 +344,21 @@ class DraggableNSView: NSView, NSDraggingSource {
             pinItem.target = self
         }
 
+        // New folder creation
+        var addedNewFolderSep = false
+        if urlsToAct.count == 1, item.isDirectory {
+            menu.addItem(.separator()); addedNewFolderSep = true
+            menu.addItem(withTitle: "New Folder Inside",
+                         action: #selector(newFolderInsideAction),
+                         keyEquivalent: "").target = self
+        }
+        if parentFolder != nil {
+            if !addedNewFolderSep { menu.addItem(.separator()) }
+            menu.addItem(withTitle: "New Folder Here",
+                         action: #selector(newFolderHereAction),
+                         keyEquivalent: "").target = self
+        }
+
         menu.addItem(.separator())
         let trashTitle = urlsToAct.count > 1 ? "Move \(urlsToAct.count) Items to Trash" : "Move to Trash"
         let trashItem = menu.addItem(withTitle: trashTitle, action: #selector(moveToTrash), keyEquivalent: "\u{8}") // backspace
@@ -477,6 +492,53 @@ class DraggableNSView: NSView, NSDraggingSource {
 
     @objc private func removeFromRoot() {
         removeFromRootHandler?()
+    }
+
+    @objc private func newFolderInsideAction() {
+        guard let dir = fileItem?.url, dir.hasDirectoryPath else { return }
+        createNewFolder(in: dir)
+    }
+
+    @objc private func newFolderHereAction() {
+        guard let dir = parentFolder else { return }
+        createNewFolder(in: dir)
+    }
+
+    private func createNewFolder(in directory: URL) {
+        let alert = NSAlert()
+        alert.messageText = "New Folder"
+        alert.informativeText = "Enter a name for the new folder."
+        alert.addButton(withTitle: "Create")
+        alert.addButton(withTitle: "Cancel")
+
+        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 22))
+        input.placeholderString = "New Folder"
+        alert.accessoryView = input
+        alert.window.initialFirstResponder = input
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let raw = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = raw.isEmpty ? "New Folder" : raw
+
+        // Collision handling: "New Folder", "New Folder 2", "New Folder 3", …
+        var dest = directory.appendingPathComponent(name)
+        if FileManager.default.fileExists(atPath: dest.path) {
+            var i = 2
+            repeat {
+                dest = directory.appendingPathComponent("\(name) \(i)")
+                i += 1
+            } while FileManager.default.fileExists(atPath: dest.path)
+        }
+
+        do {
+            try FileManager.default.createDirectory(at: dest,
+                withIntermediateDirectories: false)
+        } catch {
+            let err = NSAlert()
+            err.messageText = "Couldn't Create Folder"
+            err.informativeText = error.localizedDescription
+            err.runModal()
+        }
     }
 }
 

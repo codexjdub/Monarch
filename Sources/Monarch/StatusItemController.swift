@@ -14,6 +14,8 @@ class StatusItemController: NSObject {
     private var keyMonitor: Any?
     private var spaceMonitor: Any?
     private var removeRootObs: NSObjectProtocol?
+    private var dragBeginMonitor: Any?
+    private var dragEndMonitor: Any?
 
     init(store: FolderStore) {
         self.store = store
@@ -120,13 +122,56 @@ class StatusItemController: NSObject {
         NSApp.activate(ignoringOtherApps: true)
         model.reloadAll()
         installKeyMonitor()
+        installDragMonitor()
     }
 
     private func installKeyMonitor() {
         guard keyMonitor == nil else { return }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
-            if NSApp.keyWindow?.firstResponder is NSTextView { return event }
+            let fl = self.model.focus.level
+
+            // ⌘F: show/focus search bar (intercept even when a text field is active).
+            if event.keyCode == 3,
+               event.modifierFlags.intersection([.command, .option, .shift, .control]) == .command {
+                self.model.showSearch(forLevel: fl)
+                return nil
+            }
+
+            // Escape: dismiss search before normal escape handling.
+            if event.keyCode == 53, self.model.searchVisible[fl] == true {
+                self.model.hideSearch(forLevel: fl)
+                return nil
+            }
+
+            // Virtual typing for peek search bars.
+            // Peek windows can't become key, so their text fields can't receive
+            // focus. Intercept printable characters and write them directly into
+            // model.filterText for the active peek level.
+            if fl > 0, self.model.searchVisible[fl] == true {
+                let noMod = event.modifierFlags
+                    .intersection([.command, .option, .control]).isEmpty
+                if noMod {
+                    if event.keyCode == 51 {  // ⌫ backspace
+                        let cur = self.model.filterText[fl] ?? ""
+                        self.model.setFilter(String(cur.dropLast()), forLevel: fl)
+                        return nil
+                    }
+                    if let chars = event.characters, !chars.isEmpty,
+                       chars.unicodeScalars.allSatisfy({ $0.value >= 32 && $0.value != 127 }) {
+                        let cur = self.model.filterText[fl] ?? ""
+                        self.model.setFilter(cur + chars, forLevel: fl)
+                        return nil
+                    }
+                }
+            }
+
+            // Don't intercept other keys while the level-0 real text field is focused.
+            let textFieldActive = NSApp.windows.contains {
+                $0.isVisible && $0.firstResponder is NSTextView
+            }
+            if textFieldActive { return event }
+
             switch event.keyCode {
             case 126: self.model.keyUp();     return nil
             case 125: self.model.keyDown();   return nil
@@ -158,6 +203,25 @@ class StatusItemController: NSObject {
 
     private func removeKeyMonitor() {
         if let m = keyMonitor { NSEvent.removeMonitor(m); keyMonitor = nil }
+    }
+
+    private func installDragMonitor() {
+        guard dragBeginMonitor == nil else { return }
+        // Global monitors fire for events in OTHER apps — exactly what we need
+        // to detect a Finder drag. leftMouseDragged marks the drag active;
+        // leftMouseUp clears it once the drag ends (drop or cancel).
+        dragBeginMonitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDragged) { [weak self] _ in
+            DispatchQueue.main.async { self?.model.externalDragActive = true }
+        }
+        dragEndMonitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseUp) { [weak self] _ in
+            DispatchQueue.main.async { self?.model.externalDragActive = false }
+        }
+    }
+
+    private func removeDragMonitor() {
+        if let m = dragBeginMonitor { NSEvent.removeMonitor(m); dragBeginMonitor = nil }
+        if let m = dragEndMonitor   { NSEvent.removeMonitor(m); dragEndMonitor = nil }
+        model.externalDragActive = false
     }
 
     private func handleResizeBegan() {
@@ -307,8 +371,9 @@ class StatusItemController: NSObject {
 
 extension StatusItemController: NSPopoverDelegate {
     func popoverShouldClose(_ popover: NSPopover) -> Bool {
-        // Don't let the transient popover close itself if the click/event
-        // landed inside one of our peek windows.
+        // Don't close while a cross-app drag is in flight.
+        if model.externalDragActive { return false }
+        // Don't close if the click landed inside a peek window.
         let mouse = NSEvent.mouseLocation
         for win in NSApp.windows where win is PeekNSWindow && win.isVisible {
             if win.frame.contains(mouse) { return false }
@@ -318,6 +383,7 @@ extension StatusItemController: NSPopoverDelegate {
 
     func popoverWillClose(_ notification: Notification) {
         removeKeyMonitor()
+        removeDragMonitor()
         model.closeAll()
         guard let window = popover.contentViewController?.view.window,
               let sz = window.contentView?.frame.size,

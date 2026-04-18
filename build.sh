@@ -19,6 +19,7 @@ chmod +x "$APP_DIR/MacOS/Monarch"
 cp Resources/Info.plist "$APP_DIR/Info.plist"
 cp Resources/AppIcon.icns "$APP_DIR/Resources/AppIcon.icns"
 cp Resources/StatusIcon.png "$APP_DIR/Resources/StatusIcon.png"
+cp Resources/AppIconArtwork.png "$APP_DIR/Resources/AppIconArtwork.png"
 printf "APPL????" > "$APP_DIR/PkgInfo"
 
 codesign --deep --force --sign - Monarch.app

@@ -33,8 +33,6 @@ _(none)_
 
 ## Build & distribution
 
-- [ ] **Real code signing + notarization.** Currently ad-hoc (`-`). Users see "Apple cannot verify Monarch" on first launch. Requires Apple Developer account ($99/yr) + notarization step in `build.sh`.
-- [ ] **Sparkle auto-updates.** Easier to bake in now than retrofit later.
 - [ ] **Version bumping.** `CFBundleVersion = 1`, `CFBundleShortVersionString = 1.0` are placeholders. A `bump.sh` that increments before each `build.sh` keeps history clean.
 - [ ] **DMG packaging.** Add a `create-dmg` step at the end of `build.sh` for a draggable installer.
 
@@ -61,7 +59,7 @@ _(none)_
 If only doing five things, in order:
 
 1. **In-folder search** — biggest user-facing impact
-2. **README** — least effort, prevents future-you confusion
-3. **Quick Look on space** — feels native, minutes of work
-4. **Code signing + notarization** — gates whether anyone else will use this
-5. **Delete exploration scripts** — keeps the codebase honest
+2. **README** — least effort, prevents future-you confusion ✅
+3. **Quick Look on space** — feels native, minutes of work ✅
+4. **Delete exploration scripts** — keeps the codebase honest ✅
+5. **Version bumping** — keeps release history clean

@@ -34,6 +34,7 @@ struct PreferencesView: View {
     @AppStorage(kHotkeyEnabledKey) private var hotkeyEnabled: Bool = true
     @AppStorage(kHotkeyDisplayKey) private var hotkeyDisplay: String = defaultHotkeyDisplay
 
+    @AppStorage("showFooterBar") private var showFooterBar: Bool = true
     @State private var launchAtLogin: Bool = PreferencesView.readLaunchAtLogin()
 
     var body: some View {
@@ -65,6 +66,7 @@ struct PreferencesView: View {
                     .onChange(of: launchAtLogin) { newValue in
                         PreferencesView.writeLaunchAtLogin(newValue)
                     }
+                Toggle("Show item count and size footer", isOn: $showFooterBar)
             }
 
             Spacer()
