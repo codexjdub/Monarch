@@ -9,25 +9,16 @@ _(none)_
 
 ---
 
-## Feels incomplete
-
-- [ ] **Reorder root folders.** Can add/remove but can't drag to reorder in the popover. Order is stuck as-is.
-- [ ] **Open folder in Finder from breadcrumb.** Right-clicking a peek header has no "Open in Finder" or "Open in Terminal". Currently you have to click a file inside to get to the folder.
-- [ ] **Rename file.** Context menu has trash, copy path, share — but no rename. Basic file operation that's missing.
-
----
-
 ## Friction points
 
 - [ ] **Peek windows run off-screen.** Popover always anchors to the menu bar icon. With many peek levels, peeks run off the right edge of the screen.
-- [ ] **Search doesn't persist across peek open/close.** Close and reopen a peek, the search is gone.
 
 ---
 
 ## Nice to have
 
 - [ ] **Show folder size on hover.** Hovering a folder row could show its size as a subtitle, like Finder's Get Info.
-- [ ] **⌘N shortcut for New Folder.** Currently only accessible via right-click.
+- [ ] **Font size options.** Some users may prefer smaller or larger text in the row list. Consider a Small / Medium / Large setting in Preferences.
 
 ---
 
@@ -39,9 +30,8 @@ _(none)_
 
 ## Top picks by ROI
 
-1. **Open in Finder from breadcrumb** — users expect it, minutes of work
-2. **Rename file** — obvious gap in a file browser
-3. **Reorder root folders** — quality of life for users with many roots
+1. **Peek windows off-screen** — real usability problem for large monitors with many peek levels
+2. **Show folder size on hover** — small, useful detail
 
 ---
 
@@ -65,3 +55,7 @@ _(none)_
 - [x] **Replace NotificationCenter coupling.** `.monarchRemoveRoot`, `.monarchPinsChanged` replaced with direct callbacks. (2026-04-17)
 - [x] **Publish to GitHub.** https://github.com/codexjdub/Monarch (2026-04-17)
 - [x] **GitHub Actions.** `swift build` runs on every push. (2026-04-17)
+- [x] **Rename file.** Right-click → Rename… opens an inline alert with the current name pre-filled. (2026-04-17)
+- [x] **Reorder root shortcuts.** Drag-to-reorder list in Preferences window; changes apply immediately. (2026-04-17)
+- [x] **Files as level-0 shortcuts.** Level 0 accepts files as well as folders (Add… opens files and directories). (2026-04-17)
+- [x] **Resizable Preferences window.** Window is now resizable; shortcuts list expands to fill the extra space. (2026-04-17)

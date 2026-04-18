@@ -4,7 +4,7 @@
 
 # Monarch
 
-A native macOS menu bar app for cascading folder navigation. Click the menu bar icon, see your configured root folders. Hover any folder to peek inside — another peek opens beside it. Keep hovering to drill deeper. Click a file to open it; click a folder to reveal it in Finder.
+A native macOS menu bar app for cascading folder navigation. Click the menu bar icon to see your configured shortcuts (folders or files). Hover any folder to peek inside — another peek opens beside it. Keep hovering to drill deeper. Click a file to open it; click a folder to reveal it in Finder.
 
 ## Requirements
 
@@ -30,11 +30,21 @@ This compiles a release build, assembles `Monarch.app`, codesigns it ad-hoc, kil
 | Arrow keys | Navigate rows |
 | Return | Open focused item |
 | Space | Quick Look focused file |
+| ⌘F | Search / filter the current level |
 | Esc | Close peek / close Monarch |
 | Drag file onto folder row | Move/copy into that folder |
 | Hold drag over folder (500ms) | Spring-load: peek opens mid-drag |
-| Right-click a row | Context menu (pin, copy path, share, trash…) |
 | ⌘-click rows | Multi-select for bulk drag or open |
+| Right-click a row | Context menu (pin, rename, copy path, share, trash…) |
+
+## Preferences
+
+Open via the **···** menu → **Preferences…**
+
+- **Shortcuts** — drag to reorder, click **−** to remove
+- **Global hotkey** — record any key combo to open Monarch from anywhere
+- **Launch at login** — start Monarch automatically when you log in
+- **Show item count and size footer** — toggle the footer bar at the bottom of each level
 
 ## Icon regeneration
 
