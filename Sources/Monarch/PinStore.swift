@@ -10,6 +10,9 @@ final class PinStore {
     private let key = "pinnedFiles_v1"
     private var data: [String: [String]] = [:]
 
+    /// Called with the parent folder URL whenever a pin changes.
+    var onPinsChanged: ((URL) -> Void)?
+
     private init() {
         if let raw = UserDefaults.standard.dictionary(forKey: key) as? [String: [String]] {
             data = raw
@@ -43,11 +46,7 @@ final class PinStore {
         }
         data[folder.path] = list.isEmpty ? nil : list
         save()
-        NotificationCenter.default.post(name: .monarchPinsChanged, object: folder)
+        onPinsChanged?(folder)
         return newState
     }
-}
-
-extension Notification.Name {
-    static let monarchPinsChanged = Notification.Name("MonarchPinsChanged")
 }

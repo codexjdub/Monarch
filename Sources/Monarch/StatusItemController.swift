@@ -13,7 +13,6 @@ class StatusItemController: NSObject {
     private let model: CascadeModel
     private var keyMonitor: Any?
     private var spaceMonitor: Any?
-    private var removeRootObs: NSObjectProtocol?
     private var dragBeginMonitor: Any?
     private var dragEndMonitor: Any?
 
@@ -29,17 +28,14 @@ class StatusItemController: NSObject {
             self?.popover.performClose(nil)
         }
 
+        // Wire "Remove from Monarch" directly — no NotificationCenter needed.
+        model.onRemoveRoot = { [weak self] url in
+            self?.store.remove(url)
+        }
+
         setupButton()
         buildPopover()
         setupHotkey()
-
-        // Listen for "Remove from Monarch" context-menu action on root rows.
-        removeRootObs = NotificationCenter.default.addObserver(
-            forName: .monarchRemoveRoot, object: nil, queue: .main
-        ) { [weak self] note in
-            guard let url = note.object as? URL else { return }
-            Task { @MainActor in self?.store.remove(url) }
-        }
     }
 
     private func setupHotkey() {
@@ -51,7 +47,6 @@ class StatusItemController: NSObject {
 
     deinit {
         NSStatusBar.system.removeStatusItem(statusItem)
-        if let o = removeRootObs { NotificationCenter.default.removeObserver(o) }
     }
 
     private var savedPopoverSize: NSSize {

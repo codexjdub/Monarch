@@ -128,8 +128,11 @@ final class CascadeModel: ObservableObject {
     // Collaborators
     private let folderStore: FolderStore
     private var storeSub: AnyCancellable?
-    private var pinObs: NSObjectProtocol?
     let onDismiss: () -> Void
+
+    /// Called when "Remove from Monarch" is triggered on a root row.
+    /// Wired by StatusItemController to call store.remove(_:).
+    var onRemoveRoot: ((URL) -> Void)?
 
     // Peek window registry (levels 1+). Level 0 is the NSPopover, not owned here.
     private var peekWindows: [Int: PeekNSWindow] = [:]
@@ -180,10 +183,7 @@ final class CascadeModel: ObservableObject {
         storeSub = folderStore.$folders
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.rebuildLevel0() }
-        pinObs = NotificationCenter.default.addObserver(
-            forName: .monarchPinsChanged, object: nil, queue: .main
-        ) { [weak self] note in
-            guard let folder = note.object as? URL else { return }
+        PinStore.shared.onPinsChanged = { [weak self] folder in
             Task { @MainActor in self?.pinsChanged(folder: folder) }
         }
     }

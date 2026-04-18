@@ -60,9 +60,6 @@ struct LevelListView: View {
     }
 }
 
-extension Notification.Name {
-    static let monarchRemoveRoot = Notification.Name("MonarchRemoveRoot")
-}
 
 // MARK: - Breadcrumb
 //
@@ -455,7 +452,7 @@ struct LevelListBody: View {
                 ? { model.springLoadFolder(level: level, index: idx) }
                 : nil,
             removeFromRootHandler: level == 0
-                ? { NotificationCenter.default.post(name: .monarchRemoveRoot, object: item.url) }
+                ? { model.onRemoveRoot?(item.url) }
                 : nil
         )
         .frame(height: 34)
