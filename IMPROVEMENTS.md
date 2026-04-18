@@ -14,52 +14,52 @@ _(none)_
 - [x] **Delete exploration scripts.** Removed 10 scripts + 5 output dirs from `scripts/`. (2026-04-17)
 - [x] **Strip stale `.gitignore` entry.** Removed `FolderMenu.app/` line. (2026-04-17)
 - [x] **Add a LICENSE file.** MIT. (2026-04-17)
+- [x] **In-folder search/filter.** `⌘F` filter that narrows the list as you type. Works in popover and peek windows. (2026-04-17)
+- [x] **Keyboard navigation.** Arrows, Return, Escape, ⌘F all wired up end-to-end. (2026-04-17)
+- [x] **Quick Look on spacebar.** Space on focused item invokes `QuickLookManager`. (2026-04-17)
+- [x] **"New Folder" action.** Right-click → New Folder Inside / New Folder Here. (2026-04-17)
+- [x] **Fix drag-into-peeks.** Popover no longer closes mid-drag from external apps. (2026-04-17)
+- [x] **Fix crash when trashing a folder.** Index-out-of-bounds in `folderDidChange` fixed. (2026-04-17)
+- [x] **Peek open animation.** 200ms fade + slide. (2026-04-17)
+- [x] **App icon in popover header.** Raw artwork, transparent background. (2026-04-17)
+- [x] **Footer bar.** Item count + total size per level, toggle in Preferences. (2026-04-17)
+- [x] **Version bumping.** `bump.sh` — auto-increments build number, optional version arg. (2026-04-17)
+- [x] **Replace NotificationCenter coupling.** `.monarchRemoveRoot`, `.monarchPinsChanged` replaced with direct callbacks. (2026-04-17)
+- [x] **Publish to GitHub.** https://github.com/codexjdub/Monarch (2026-04-17)
+- [x] **GitHub Actions.** `swift build` runs on every push. (2026-04-17)
 
 ---
 
-## Quick wins (≤1 hr each)
+## Feels incomplete
+
+- [ ] **Reorder root folders.** Can add/remove but can't drag to reorder in the popover. Order is stuck as-is.
+- [ ] **Open folder in Finder from breadcrumb.** Right-clicking a peek header has no "Open in Finder" or "Open in Terminal". Currently you have to click a file inside to get to the folder.
+- [ ] **Rename file.** Context menu has trash, copy path, share — but no rename. Basic file operation that's missing.
 
 ---
 
-## Real product gaps
+## Friction points
 
-- [ ] **In-folder search/filter.** With 200+ items, scrolling is the only way to find anything. `⌘F` filter that narrows the list as you type. Highest-impact improvement available — every Folder Peek competitor has it.
-- [ ] **Keyboard navigation polish.** Confirm arrow keys + Return for drilling/opening work end-to-end and feel snappy. Table-stakes for power users.
-- [ ] **"New Folder" / "New File" actions.** Currently Monarch only consumes the filesystem, never produces. Right-click → New Folder is ~30 lines and meaningfully extends usefulness.
-- [ ] **Show file count + total size** in breadcrumb or footer of each level. Tiny addition, hugely informative.
-- [ ] **Quick Look on spacebar.** macOS users hit space-to-preview reflexively. Wire `space` (when focus exists) to invoke existing `QuickLookManager`.
+- [ ] **Peek windows run off-screen.** Popover always anchors to the menu bar icon. With many peek levels, peeks run off the right edge of the screen.
+- [ ] **Search doesn't persist across peek open/close.** Close and reopen a peek, the search is gone.
+
+---
+
+## Nice to have
+
+- [ ] **Show folder size on hover.** Hovering a folder row could show its size as a subtitle, like Finder's Get Info.
+- [ ] **⌘N shortcut for New Folder.** Currently only accessible via right-click.
 
 ---
 
 ## Build & distribution
 
-- [ ] **Version bumping.** `CFBundleVersion = 1`, `CFBundleShortVersionString = 1.0` are placeholders. A `bump.sh` that increments before each `build.sh` keeps history clean.
-- [ ] **DMG packaging.** Add a `create-dmg` step at the end of `build.sh` for a draggable installer.
+- [ ] **DMG packaging.** Add a `create-dmg` step for a draggable installer. Waiting until ready to distribute widely.
 
 ---
 
-## Code quality
+## Top picks by ROI
 
-- [ ] **Tests.** None exist. Filesystem + drag-and-drop + concurrency code is a regression magnet. Start with `FolderStore`, `PinStore`, `FileDropHelper.uniqueDestination`.
-- [ ] **Decompose `CascadeModel`.** It owns state machine, FSEvents lifecycle, folder loading, pin/recent composition, focus tracking, breadcrumbs. Worth splitting as it grows.
-- [ ] **Reconsider notification-based coupling.** `.monarchRemoveRoot`, `.monarchPinsChanged` work but are invisible at call sites. Past 4–5 of these, an event bus or direct callbacks read better.
-
----
-
-## Subtle polish
-
-- [ ] **First-run experience.** Empty state (`"No folders yet"`) is correct but cold. A one-time arrow/hint pointing at the settings button would orient new users.
-- [ ] **Animation on level open.** Peek windows appear/disappear instantly. A 100ms scale+fade would feel more refined.
-- [ ] **Global drop-zone affordance.** Currently only the hovered folder row highlights during external drag. A subtle accent border around the whole popover when anything is being dragged would signal "you can drop here."
-
----
-
-## Top 5 by ROI
-
-If only doing five things, in order:
-
-1. **In-folder search** — biggest user-facing impact
-2. **README** — least effort, prevents future-you confusion ✅
-3. **Quick Look on space** — feels native, minutes of work ✅
-4. **Delete exploration scripts** — keeps the codebase honest ✅
-5. **Version bumping** — keeps release history clean
+1. **Open in Finder from breadcrumb** — users expect it, minutes of work
+2. **Rename file** — obvious gap in a file browser
+3. **Reorder root folders** — quality of life for users with many roots
