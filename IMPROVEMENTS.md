@@ -18,7 +18,9 @@ _(none)_
 ## Nice to have
 
 - [ ] **Show folder size on hover.** Hovering a folder row could show its size as a subtitle, like Finder's Get Info.
-- [ ] **Font size options.** Some users may prefer smaller or larger text in the row list. Consider a Small / Medium / Large setting in Preferences.
+- [ ] **Open in Terminal.** Right-click a folder → open in Terminal (or iTerm if installed).
+- [ ] **Open in editor.** Dedicated context menu item for VS Code and other common editors.
+- [ ] **Groups/sections.** Organize root shortcuts into named groups like "Work" and "Personal".
 
 ---
 
@@ -30,7 +32,7 @@ _(none)_
 
 ## Top picks by ROI
 
-1. **Peek windows off-screen** — real usability problem for large monitors with many peek levels
+1. **Open in Terminal** — high value for developers, straightforward to implement
 2. **Show folder size on hover** — small, useful detail
 
 ---
@@ -61,3 +63,5 @@ _(none)_
 - [x] **Resizable Preferences window.** Window is now resizable; shortcuts list expands to fill the extra space. (2026-04-17)
 - [x] **Add to Monarch via context menu.** Right-click any item in a peek window → Add to Monarch promotes it to level 0. (2026-04-17)
 - [x] **Drag to menu bar icon to add shortcut.** Drag any file or folder from Finder onto the Monarch icon — it highlights on hover and adds the item on drop. (2026-04-17)
+- [x] **Text size setting.** Small / Medium / Large in Preferences; scales row height, font, and icon size together. (2026-04-18)
+- [x] **Preferences layout overhaul.** Grouped into Shortcuts / Appearance / Behavior sections; consistent padding; ⌘, now works directly from the popover. (2026-04-18)

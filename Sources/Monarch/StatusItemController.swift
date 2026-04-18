@@ -146,6 +146,13 @@ class StatusItemController: NSObject {
             guard let self else { return event }
             let fl = self.model.focus.level
 
+            // ⌘,: open Preferences.
+            if event.keyCode == 43,
+               event.modifierFlags.intersection([.command, .option, .shift, .control]) == .command {
+                self.openPreferences()
+                return nil
+            }
+
             // ⌘F: show/focus search bar (intercept even when a text field is active).
             if event.keyCode == 3,
                event.modifierFlags.intersection([.command, .option, .shift, .control]) == .command {

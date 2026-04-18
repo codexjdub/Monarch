@@ -234,6 +234,9 @@ struct LevelListBody: View {
     var onResizeDrag: ((CGSize) -> Void)?
     var onResizeEnded: (() -> Void)?
 
+    @AppStorage("rowDensity") private var densityRaw: String = RowDensity.medium.rawValue
+    private var density: RowDensity { RowDensity(rawValue: densityRaw) ?? .medium }
+
     private var state: CascadeModel.Level? {
         model.levels.indices.contains(level) ? model.levels[level] : nil
     }
@@ -479,7 +482,7 @@ struct LevelListBody: View {
                 ? { model.addToRoot($0) }
                 : nil
         )
-        .frame(height: 34)
+        .frame(height: density.rowHeight)
         .id(item.id)
         .background(RowFrameReporter(level: level, index: idx, model: model))
     }

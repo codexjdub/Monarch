@@ -2,6 +2,55 @@ import AppKit
 import SwiftUI
 import CoreServices
 
+// MARK: - Row density
+
+enum RowDensity: String, CaseIterable {
+    case small, medium, large
+
+    var label: String {
+        switch self {
+        case .small:  return "Small"
+        case .medium: return "Medium"
+        case .large:  return "Large"
+        }
+    }
+    var rowHeight: CGFloat {
+        switch self {
+        case .small:  return 26
+        case .medium: return 34
+        case .large:  return 44
+        }
+    }
+    var fontSize: CGFloat {
+        switch self {
+        case .small:  return 11
+        case .medium: return 13
+        case .large:  return 15
+        }
+    }
+    var subtitleFontSize: CGFloat {
+        switch self {
+        case .small:  return 9
+        case .medium: return 10
+        case .large:  return 12
+        }
+    }
+    var iconSize: CGFloat {
+        switch self {
+        case .small:  return 14
+        case .medium: return 20
+        case .large:  return 24
+        }
+    }
+    var chevronSize: CGFloat {
+        switch self {
+        case .small:  return 9
+        case .medium: return 10
+        case .large:  return 11
+        }
+    }
+}
+
 // MARK: - Selection state (Cmd-click multi-select for drag-out)
 
 class SelectionState: ObservableObject {
@@ -58,6 +107,9 @@ struct FileRowContent: View {
     let isFocused: Bool
     let isOnPath: Bool
 
+    @AppStorage("rowDensity") private var densityRaw: String = RowDensity.medium.rawValue
+    private var density: RowDensity { RowDensity(rawValue: densityRaw) ?? .medium }
+
     var isSelected: Bool { selectionState.isSelected(item.url) }
 
     var highlightColor: Color {
@@ -70,11 +122,11 @@ struct FileRowContent: View {
     var body: some View {
         HStack(spacing: 8) {
             RowIconView(item: item)
-                .frame(width: 20, height: 20)
+                .frame(width: density.iconSize, height: density.iconSize)
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(item.name)
-                    .font(.system(size: 13))
+                    .font(.system(size: density.fontSize))
                     .lineLimit(1)
                     .truncationMode(.middle)
                 subtitleView
@@ -84,7 +136,7 @@ struct FileRowContent: View {
 
             if item.isDirectory {
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 10))
+                    .font(.system(size: density.chevronSize))
                     .foregroundStyle(.tertiary)
             }
         }
@@ -102,7 +154,7 @@ struct FileRowContent: View {
         let subtitle = parts.compactMap { $0 }.joined(separator: "  ·  ")
         if !subtitle.isEmpty {
             Text(subtitle)
-                .font(.system(size: 10))
+                .font(.system(size: density.subtitleFontSize))
                 .foregroundStyle(.secondary)
         }
     }

@@ -22,8 +22,8 @@ final class PreferencesWindowController: NSObject {
         let win = NSWindow(contentViewController: hosting)
         win.title = "Monarch Preferences"
         win.styleMask = [.titled, .closable, .resizable]
-        win.setContentSize(NSSize(width: 440, height: 460))
-        win.contentMinSize = NSSize(width: 380, height: 340)
+        win.setContentSize(NSSize(width: 480, height: 540))
+        win.contentMinSize = NSSize(width: 420, height: 400)
         win.isReleasedWhenClosed = false
         win.center()
         self.window = win
@@ -41,6 +41,7 @@ struct PreferencesView: View {
     @AppStorage(kHotkeyDisplayKey) private var hotkeyDisplay: String = defaultHotkeyDisplay
 
     @AppStorage("showFooterBar") private var showFooterBar: Bool = true
+    @AppStorage("rowDensity") private var densityRaw: String = RowDensity.medium.rawValue
     @State private var launchAtLogin: Bool = PreferencesView.readLaunchAtLogin()
 
     var body: some View {
@@ -99,47 +100,63 @@ struct PreferencesView: View {
             }
             .padding(.horizontal, 20)
             .padding(.top, 20)
+            .padding(.bottom, 16)
             .layoutPriority(1)
 
-            Divider().padding(.vertical, 12)
+            Divider()
 
-            Form {
-                Section {
-                    HStack {
-                        Toggle(isOn: $hotkeyEnabled) {
-                            Text("Global hotkey")
+            VStack(alignment: .leading, spacing: 14) {
+                // Appearance
+                Text("Appearance")
+                    .font(.headline)
+
+                HStack {
+                    Text("Text size")
+                    Spacer()
+                    Picker("", selection: $densityRaw) {
+                        ForEach(RowDensity.allCases, id: \.rawValue) { d in
+                            Text(d.label).tag(d.rawValue)
                         }
-                        .toggleStyle(.checkbox)
-                        Spacer()
-                        HotkeyRecorderView()
-                            .disabled(!hotkeyEnabled)
-                            .opacity(hotkeyEnabled ? 1 : 0.5)
                     }
+                    .pickerStyle(.segmented)
+                    .frame(width: 180)
+                }
+                Toggle("Show item count and size footer", isOn: $showFooterBar)
+
+                Divider()
+
+                // Behavior
+                Text("Behavior")
+                    .font(.headline)
+
+                Toggle("Launch at login", isOn: $launchAtLogin)
+                    .onChange(of: launchAtLogin) { newValue in
+                        PreferencesView.writeLaunchAtLogin(newValue)
+                    }
+
+                HStack {
+                    Toggle(isOn: $hotkeyEnabled) {
+                        Text("Global hotkey")
+                    }
+                    .toggleStyle(.checkbox)
                     .onChange(of: hotkeyEnabled) { _ in
                         HotkeyManager.shared.installFromDefaults()
                     }
-
-                    Text("Press this combination anywhere to open Monarch.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    Spacer()
+                    HotkeyRecorderView()
+                        .disabled(!hotkeyEnabled)
+                        .opacity(hotkeyEnabled ? 1 : 0.5)
                 }
-
-                Divider().padding(.vertical, 4)
-
-                Section {
-                    Toggle("Launch at login", isOn: $launchAtLogin)
-                        .onChange(of: launchAtLogin) { newValue in
-                            PreferencesView.writeLaunchAtLogin(newValue)
-                        }
-                    Toggle("Show item count and size footer", isOn: $showFooterBar)
-                }
-
-                Spacer()
+                Text("Press this combination anywhere to open Monarch.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, -10)
             }
             .padding(.horizontal, 20)
-            .padding(.bottom, 20)
+            .padding(.top, 16)
+            .padding(.bottom, 28)
         }
-        .frame(minWidth: 380, minHeight: 340)
+        .frame(minWidth: 420, minHeight: 400)
     }
 
     // MARK: - Launch at Login (SMAppService, macOS 13+)

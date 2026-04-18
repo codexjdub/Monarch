@@ -43,9 +43,10 @@ This compiles a release build, assembles `Monarch.app`, codesigns it ad-hoc, kil
 Open via the **···** menu → **Preferences…**
 
 - **Shortcuts** — drag to reorder, click **−** to remove
-- **Global hotkey** — record any key combo to open Monarch from anywhere
-- **Launch at login** — start Monarch automatically when you log in
+- **Text size** — Small / Medium / Large; scales row height, font, and icon size together
 - **Show item count and size footer** — toggle the footer bar at the bottom of each level
+- **Launch at login** — start Monarch automatically when you log in
+- **Global hotkey** — record any key combo to open Monarch from anywhere (⌘, opens Preferences from the popover)
 
 ## Icon regeneration
 
