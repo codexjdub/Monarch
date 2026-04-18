@@ -719,6 +719,14 @@ final class CascadeModel: ObservableObject {
         shortcutStore.move(from: from, to: to)
     }
 
+    func addToRoot(_ url: URL) {
+        shortcutStore.add(url)
+    }
+
+    func isInRoot(_ url: URL) -> Bool {
+        shortcutStore.shortcuts.contains(url)
+    }
+
     // MARK: - Folder loading
 
     struct FolderContents {

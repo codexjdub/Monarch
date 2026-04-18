@@ -32,10 +32,11 @@ This compiles a release build, assembles `Monarch.app`, codesigns it ad-hoc, kil
 | Space | Quick Look focused file |
 | ⌘F | Search / filter the current level |
 | Esc | Close peek / close Monarch |
+| Drag file/folder onto menu bar icon | Add it to your shortcuts |
 | Drag file onto folder row | Move/copy into that folder |
 | Hold drag over folder (500ms) | Spring-load: peek opens mid-drag |
 | ⌘-click rows | Multi-select for bulk drag or open |
-| Right-click a row | Context menu (pin, rename, copy path, share, trash…) |
+| Right-click a row | Context menu (pin, rename, add to Monarch, copy path, share, trash…) |
 
 ## Preferences
 

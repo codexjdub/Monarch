@@ -63,6 +63,26 @@ class StatusItemController: NSObject {
         button.action = #selector(handleClick)
         button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         button.target = self
+
+        // Transparent drag-target overlay. Captures file drops; passes all
+        // mouse events through to the button beneath so click/right-click
+        // behaviour is unchanged.
+        let overlay = DropOverlayView()
+        overlay.translatesAutoresizingMaskIntoConstraints = false
+        button.addSubview(overlay)
+        NSLayoutConstraint.activate([
+            overlay.leadingAnchor.constraint(equalTo: button.leadingAnchor),
+            overlay.trailingAnchor.constraint(equalTo: button.trailingAnchor),
+            overlay.topAnchor.constraint(equalTo: button.topAnchor),
+            overlay.bottomAnchor.constraint(equalTo: button.bottomAnchor),
+        ])
+        overlay.onDrop = { [weak self] urls in
+            guard let self else { return }
+            for url in urls { self.store.add(url) }
+        }
+        overlay.onHighlight = { [weak self] on in
+            self?.statusItem.button?.highlight(on)
+        }
     }
 
     /// Loads `Resources/StatusIcon.png` from the bundle as a template image.
@@ -385,5 +405,54 @@ extension StatusItemController: NSPopoverDelegate {
               sz.width > 100, sz.height > 100 else { return }
         UserDefaults.standard.set(Double(sz.width),  forKey: kPopoverWidth)
         UserDefaults.standard.set(Double(sz.height), forKey: kPopoverHeight)
+    }
+}
+
+// MARK: - Drag-to-add overlay
+
+/// Invisible view that sits over the status bar button and accepts file drops.
+/// Overrides hitTest → nil so all mouse events fall through to the button.
+private class DropOverlayView: NSView {
+    var onDrop: (([URL]) -> Void)?
+    var onHighlight: ((Bool) -> Void)?
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        registerForDraggedTypes([.fileURL])
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        registerForDraggedTypes([.fileURL])
+    }
+
+    // Transparent to clicks — lets the NSStatusBarButton handle them.
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard sender.draggingPasteboard.canReadObject(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        ) else { return [] }
+        onHighlight?(true)
+        return .copy
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        onHighlight?(false)
+    }
+
+    override func draggingEnded(_ sender: NSDraggingInfo) {
+        onHighlight?(false)
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let urls = sender.draggingPasteboard.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        ) as? [URL] ?? []
+        guard !urls.isEmpty else { return false }
+        onDrop?(urls)
+        return true
     }
 }

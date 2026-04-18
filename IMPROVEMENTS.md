@@ -59,3 +59,5 @@ _(none)_
 - [x] **Reorder root shortcuts.** Drag-to-reorder list in Preferences window; changes apply immediately. (2026-04-17)
 - [x] **Files as level-0 shortcuts.** Level 0 accepts files as well as folders (Add… opens files and directories). (2026-04-17)
 - [x] **Resizable Preferences window.** Window is now resizable; shortcuts list expands to fill the extra space. (2026-04-17)
+- [x] **Add to Monarch via context menu.** Right-click any item in a peek window → Add to Monarch promotes it to level 0. (2026-04-17)
+- [x] **Drag to menu bar icon to add shortcut.** Drag any file or folder from Finder onto the Monarch icon — it highlights on hover and adds the item on drop. (2026-04-17)

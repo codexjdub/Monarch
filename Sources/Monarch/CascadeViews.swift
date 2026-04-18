@@ -474,6 +474,9 @@ struct LevelListBody: View {
                 : nil,
             removeFromRootHandler: level == 0
                 ? { model.onRemoveRoot?(item.url) }
+                : nil,
+            addToRootHandler: level > 0 && !model.isInRoot(item.url)
+                ? { model.addToRoot($0) }
                 : nil
         )
         .frame(height: 34)

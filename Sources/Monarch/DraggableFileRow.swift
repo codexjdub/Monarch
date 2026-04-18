@@ -118,6 +118,7 @@ class DraggableNSView: NSView, NSDraggingSource {
     var selectionState: SelectionState?
     var parentFolder: URL?
     var removeFromRootHandler: (() -> Void)?
+    var addToRootHandler: ((URL) -> Void)?
     /// Called when a drag hovers this folder row long enough to spring-load.
     var onSpringLoad: (() -> Void)?
 
@@ -344,6 +345,13 @@ class DraggableNSView: NSView, NSDraggingSource {
             pinItem.target = self
         }
 
+        // Add to Monarch — promote a peek item to level 0.
+        if addToRootHandler != nil, urlsToAct.count == 1 {
+            menu.addItem(withTitle: "Add to Monarch",
+                         action: #selector(addToRoot),
+                         keyEquivalent: "").target = self
+        }
+
         // New folder creation
         var addedNewFolderSep = false
         if urlsToAct.count == 1, item.isDirectory {
@@ -373,7 +381,7 @@ class DraggableNSView: NSView, NSDraggingSource {
         trashItem.keyEquivalentModifierMask = [.command]
         trashItem.target = self
 
-        // Root-folder rows get a "Remove from Monarch" item.
+        // Root rows get "Remove from Monarch" at the bottom.
         if removeFromRootHandler != nil {
             menu.addItem(.separator())
             menu.addItem(withTitle: "Remove from Monarch",
@@ -502,6 +510,11 @@ class DraggableNSView: NSView, NSDraggingSource {
         removeFromRootHandler?()
     }
 
+    @objc private func addToRoot() {
+        guard let url = fileItem?.url else { return }
+        addToRootHandler?(url)
+    }
+
     @objc private func renameAction() {
         guard let item = fileItem else { return }
         let alert = NSAlert()
@@ -589,6 +602,7 @@ struct DraggableFileRow: NSViewRepresentable {
     var parentFolder: URL? = nil
     var onSpringLoad: (() -> Void)? = nil
     var removeFromRootHandler: (() -> Void)? = nil
+    var addToRootHandler: ((URL) -> Void)? = nil
 
     func makeNSView(context: Context) -> DraggableNSView {
         let view = DraggableNSView()
@@ -598,6 +612,7 @@ struct DraggableFileRow: NSViewRepresentable {
         view.parentFolder = parentFolder
         view.onSpringLoad = onSpringLoad
         view.removeFromRootHandler = removeFromRootHandler
+        view.addToRootHandler = addToRootHandler
 
         let hosting = NSHostingView(rootView: makeContent())
         hosting.translatesAutoresizingMaskIntoConstraints = false
@@ -618,6 +633,7 @@ struct DraggableFileRow: NSViewRepresentable {
         nsView.parentFolder = parentFolder
         nsView.onSpringLoad = onSpringLoad
         nsView.removeFromRootHandler = removeFromRootHandler
+        nsView.addToRootHandler = addToRootHandler
         if let hosting = nsView.subviews.first as? NSHostingView<FileRowContent> {
             hosting.rootView = makeContent()
         }
