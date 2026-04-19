@@ -832,9 +832,8 @@ final class CascadeModel: ObservableObject {
         // Build sections: Pinned, Recent, All.
         let pinnedURLs = PinStore.shared.pinned(in: folder)
         let pinnedSet = Set(pinnedURLs.map(\.path))
-        let pinnedItems = pinnedURLs.compactMap { url in
-            allSorted.first(where: { $0.url == url })
-        }
+        let itemByURL = Dictionary(uniqueKeysWithValues: allSorted.map { ($0.url, $0) })
+        let pinnedItems = pinnedURLs.compactMap { itemByURL[$0] }
 
         // Recent: top 5 non-pinned files by modification date (skip dirs).
         let recentCount = 5
