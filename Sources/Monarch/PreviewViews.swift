@@ -206,7 +206,9 @@ struct QuickLookPreviewView: NSViewRepresentable {
     let url: URL
 
     func makeNSView(context: Context) -> QLPreviewView {
-        let v = QLPreviewView(frame: .zero, style: .normal) ?? QLPreviewView()
+        // QLPreviewView(frame:style:) returns optional on older SDKs but cannot
+        // realistically fail — force-unwrap is intentional.
+        let v = QLPreviewView(frame: .zero, style: .normal)!
         v.autostarts = true
         v.shouldCloseWithWindow = false
         v.previewItem = url as QLPreviewItem
