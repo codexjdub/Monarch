@@ -120,7 +120,7 @@ struct TextPreviewView: NSViewRepresentable {
 
     /// Maximum bytes loaded into the preview pane. Large files are truncated
     /// at this boundary to keep the NSTextView responsive.
-    private static let previewMaxBytes = 1_000_000
+    nonisolated static let previewMaxBytes = 1_000_000
 
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSScrollView()
@@ -179,7 +179,7 @@ struct TextPreviewView: NSViewRepresentable {
         }
     }
 
-    private static func readTruncated(url: URL, maxBytes: Int) -> String {
+    nonisolated private static func readTruncated(url: URL, maxBytes: Int) -> String {
         guard let fh = try? FileHandle(forReadingFrom: url) else {
             return "Unable to read file."
         }

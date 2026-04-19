@@ -82,13 +82,24 @@ struct FileItem: Identifiable, Hashable {
     let fileSize: String?
     let previewKind: PreviewKind?
     let imageDimensions: String?
+    /// True if the backing path existed at construction time. Meaningful
+    /// mainly for root shortcuts — deep-folder items are always true (they
+    /// were just enumerated). When false, UI dims the row and intercepts
+    /// clicks with a "Remove / Locate" alert.
+    let exists: Bool
+    /// Content modification date at construction time. Used as a cache-bust
+    /// component for thumbnail keys so edits invalidate automatically without
+    /// re-stat'ing on every row render.
+    let contentModifiedAt: Date?
 
     init(url: URL) {
         self.url = url
         self.icon = NSWorkspace.shared.icon(forFile: url.path)
+        self.exists = FileManager.default.fileExists(atPath: url.path)
 
-        // Batch-fetch isDirectory + fileSize in one syscall.
-        let resources = try? url.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey])
+        // Batch-fetch isDirectory + fileSize + mtime in one syscall.
+        let resources = try? url.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey])
+        self.contentModifiedAt = resources?.contentModificationDate
         let isDir = resources?.isDirectory ?? false
         self.isDirectory = isDir
         if let bytes = resources?.fileSize, !isDir {

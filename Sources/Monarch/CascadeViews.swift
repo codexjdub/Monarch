@@ -39,14 +39,20 @@ struct LevelListView: View {
         }
     }
 
+    private func emptyMessage(for state: CascadeModel.Level) -> String {
+        if state.readError { return "Can't read folder" }
+        if state.isLoading { return "Loading…" }
+        return level == 0 ? "No folders yet" : "Empty folder"
+    }
+
     @ViewBuilder private var listBody: some View {
         if let state {
             if state.items.isEmpty {
                 Spacer()
-                Text(state.readError ? "Can't read folder" : (level == 0 ? "No folders yet" : "Empty folder"))
+                Text(emptyMessage(for: state))
                     .foregroundStyle(.secondary)
                     .font(.system(size: 13))
-                if level == 0 && !state.readError {
+                if level == 0 && !state.readError && !state.isLoading {
                     Text("Click ··· to add a folder")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
@@ -364,7 +370,9 @@ struct LevelListBody: View {
         } else {
             VStack {
                 Spacer()
-                Text(state?.readError == true ? "Can't read folder" : "Empty folder")
+                Text(state?.readError == true ? "Can't read folder"
+                     : state?.isLoading == true ? "Loading…"
+                     : "Empty folder")
                     .foregroundStyle(.secondary)
                     .font(.system(size: 13))
                 Spacer()

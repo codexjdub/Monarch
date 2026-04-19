@@ -45,7 +45,8 @@ extension UserDefaults {
     }
 }
 
-class Settings {
+@MainActor
+final class Settings {
     static let shared = Settings()
     private let key = "savedFolderBookmarks"
 

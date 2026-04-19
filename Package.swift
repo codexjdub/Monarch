@@ -1,4 +1,4 @@
-// swift-tools-version: 5.9
+// swift-tools-version: 6.0
 import PackageDescription
 
 let package = Package(
@@ -8,6 +8,9 @@ let package = Package(
         .executableTarget(
             name: "Monarch",
             path: "Sources/Monarch",
+            swiftSettings: [
+                .swiftLanguageMode(.v6)
+            ],
             linkerSettings: [
                 .linkedFramework("QuickLookUI"),
                 .linkedFramework("CoreServices"),

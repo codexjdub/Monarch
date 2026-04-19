@@ -3,22 +3,33 @@ import Foundation
 /// Watches a folder for content changes using FSEvents. Coalesces events
 /// with a short debounce so a flurry of writes (e.g. unzip) produces one
 /// callback. The callback is delivered on the main queue.
+@MainActor
 final class FolderWatcher {
     private let url: URL
-    private let onChange: () -> Void
+    private let onChange: @MainActor () -> Void
     private let debounce: TimeInterval
 
     private var stream: FSEventStreamRef?
     private var pending: DispatchWorkItem?
 
-    init(url: URL, debounce: TimeInterval = 0.15, onChange: @escaping () -> Void) {
+    init(url: URL, debounce: TimeInterval = 0.15, onChange: @escaping @MainActor () -> Void) {
         self.url = url
         self.debounce = debounce
         self.onChange = onChange
         start()
     }
 
-    deinit { stop() }
+    deinit {
+        // Class is @MainActor; deinit is nonisolated. FSEvents APIs are
+        // safe to call from any thread.
+        MainActor.assumeIsolated {
+            if let s = stream {
+                FSEventStreamStop(s)
+                FSEventStreamInvalidate(s)
+                FSEventStreamRelease(s)
+            }
+        }
+    }
 
     private func start() {
         let path = url.path as NSString
@@ -51,30 +62,18 @@ final class FolderWatcher {
         stream = s
     }
 
-    private func stop() {
-        if let s = stream {
-            FSEventStreamStop(s)
-            FSEventStreamInvalidate(s)
-            FSEventStreamRelease(s)
-            stream = nil
-        }
-        pending?.cancel(); pending = nil
-    }
-
-    // C-compatible trampoline; routes back to the instance.
-    private static let callback: FSEventStreamCallback = { _, clientInfo, _, _, _, _ in
+    // C-compatible trampoline; routes back to the instance. Nonisolated —
+    // FSEvents invokes this from its dispatch queue.
+    nonisolated private static let callback: FSEventStreamCallback = { _, clientInfo, _, _, _, _ in
         guard let info = clientInfo else { return }
         let me = Unmanaged<FolderWatcher>.fromOpaque(info).takeUnretainedValue()
-        me.schedule()
+        Task { @MainActor in me.schedule() }
     }
 
     private func schedule() {
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            self.pending?.cancel()
-            let task = DispatchWorkItem { [weak self] in self?.onChange() }
-            self.pending = task
-            DispatchQueue.main.asyncAfter(deadline: .now() + self.debounce, execute: task)
-        }
+        pending?.cancel()
+        let task = DispatchWorkItem { @MainActor [weak self] in self?.onChange() }
+        pending = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + debounce, execute: task)
     }
 }

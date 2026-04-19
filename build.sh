@@ -5,9 +5,14 @@ set -e
 pkill -x Monarch 2>/dev/null || true
 
 echo "Building Monarch..."
-swift build -c release
+swift build -c release --arch arm64
+swift build -c release --arch x86_64
+lipo -create \
+    .build/arm64-apple-macosx/release/Monarch \
+    .build/x86_64-apple-macosx/release/Monarch \
+    -output .build/Monarch-universal
 
-BINARY=".build/release/Monarch"
+BINARY=".build/Monarch-universal"
 APP_DIR="Monarch.app/Contents"
 
 rm -rf Monarch.app

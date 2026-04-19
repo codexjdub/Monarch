@@ -1,7 +1,8 @@
 import Cocoa
 import QuickLookUI
 
-class QuickLookManager: NSObject, QLPreviewPanelDataSource {
+@MainActor
+final class QuickLookManager: NSObject, @preconcurrency QLPreviewPanelDataSource {
     static let shared = QuickLookManager()
     private var previewURLs: [URL] = []
 

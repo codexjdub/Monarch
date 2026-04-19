@@ -51,7 +51,11 @@ class StatusItemController: NSObject {
     }
 
     deinit {
-        NSStatusBar.system.removeStatusItem(statusItem)
+        // Class is @MainActor; deinit is nonisolated by default in Swift 6.
+        // NSStatusItem is main-thread-only, so assume isolation to access it.
+        MainActor.assumeIsolated {
+            NSStatusBar.system.removeStatusItem(statusItem)
+        }
     }
 
     private var savedPopoverSize: NSSize {
