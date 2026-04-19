@@ -638,33 +638,28 @@ final class CascadeModel: ObservableObject {
     // MARK: - Peek open / close
 
     private func openFolderPeek(atLevel level: Int, folder: URL, parentIndex: Int) {
-        // Close any existing peek at this level and deeper; we're replacing.
         closePeeks(atLevelsGreaterThan: level - 1)
-
         let result = CascadeModel.loadFolder(folder)
         let state = Level(source: folder, content: .folder(items: result.items, sections: result.sections, rowFrames: [:]), totalSize: result.totalSize)
-        if levels.count == level {
-            levels.append(state)
-        } else if levels.count > level {
-            levels[level] = state
-            if levels.count > level + 1 {
-                levels.removeLast(levels.count - level - 1)
-            }
-        } else {
-            return
-        }
-        pathIndices[level - 1] = parentIndex
+        guard installLevel(state, atLevel: level, parentIndex: parentIndex) else { return }
         installWatcher(forLevel: level, url: folder)
-
         let content = AnyView(LevelListView(level: level, model: self))
         presentPeek(atLevel: level, parentIndex: parentIndex, size: peekManager.defaultSize, content: content)
     }
 
     private func openPreviewPeek(atLevel level: Int, url: URL, kind: PreviewKind, parentIndex: Int) {
         closePeeks(atLevelsGreaterThan: level - 1)
-
-        let size = PeekWindowManager.previewSize(for: url, kind: kind)
         let state = Level(source: url, content: .preview(kind: kind, url: url))
+        guard installLevel(state, atLevel: level, parentIndex: parentIndex) else { return }
+        let content = AnyView(PreviewLevelView(level: level, url: url, kind: kind, model: self))
+        presentPeek(atLevel: level, parentIndex: parentIndex, size: PeekWindowManager.previewSize(for: url, kind: kind), content: content)
+    }
+
+    /// Inserts or replaces `state` at `level`, trims any deeper levels, and
+    /// records the parent path index. Returns false if the level index is out
+    /// of range (caller should bail out).
+    @discardableResult
+    private func installLevel(_ state: Level, atLevel level: Int, parentIndex: Int) -> Bool {
         if levels.count == level {
             levels.append(state)
         } else if levels.count > level {
@@ -673,12 +668,10 @@ final class CascadeModel: ObservableObject {
                 levels.removeLast(levels.count - level - 1)
             }
         } else {
-            return
+            return false
         }
         pathIndices[level - 1] = parentIndex
-
-        let content = AnyView(PreviewLevelView(level: level, url: url, kind: kind, model: self))
-        presentPeek(atLevel: level, parentIndex: parentIndex, size: size, content: content)
+        return true
     }
 
     private func presentPeek(atLevel level: Int, parentIndex: Int, size: NSSize, content: AnyView) {
