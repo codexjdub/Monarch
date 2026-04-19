@@ -10,7 +10,6 @@ class StatusItemController: NSObject {
     private var sizeAtResizeStart: NSSize = .zero
     private let model: CascadeModel
     private var keyMonitor: Any?
-    private var spaceMonitor: Any?
     private var dragBeginMonitor: Any?
     private var dragEndMonitor: Any?
     private var appearanceObserver: NSKeyValueObservation?
