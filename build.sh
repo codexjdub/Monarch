@@ -22,6 +22,7 @@ cp Resources/StatusIcon.png "$APP_DIR/Resources/StatusIcon.png"
 cp Resources/AppIconArtwork.png "$APP_DIR/Resources/AppIconArtwork.png"
 printf "APPL????" > "$APP_DIR/PkgInfo"
 
+xattr -cr Monarch.app
 codesign --deep --force --sign - Monarch.app
 
 echo "Done!"
