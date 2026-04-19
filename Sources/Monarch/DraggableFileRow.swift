@@ -321,6 +321,18 @@ extension DraggableNSView /* Drop Target */ {
         let op = FileDropHelper.preferredOperation(sources: urls, dest: dest)
         let n = FileDropHelper.perform(urls: urls, into: dest, operation: op)
         isDropTarget = false
+        let failed = urls.count - n
+        if failed > 0 {
+            DispatchQueue.main.async {
+                let alert = NSAlert()
+                alert.messageText = failed == urls.count
+                    ? "The operation couldn't be completed."
+                    : "\(failed) of \(urls.count) items couldn't be moved."
+                alert.informativeText = "You may not have permission to write to \"\(dest.lastPathComponent)\"."
+                alert.alertStyle = .warning
+                alert.runModal()
+            }
+        }
         return n > 0
     }
 
