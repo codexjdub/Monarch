@@ -75,10 +75,10 @@ struct FileItem: Identifiable, Hashable {
     // Cheap derived properties — computed on every access (trivial cost).
     var name: String { url.lastPathComponent }
     var isHidden: Bool { name.hasPrefix(".") }
-    var icon: NSImage { NSWorkspace.shared.icon(forFile: url.path) }
 
     // Cached at init — these involve filesystem or image-header reads that
     // would otherwise repeat on every row render.
+    let icon: NSImage
     let isDirectory: Bool
     let fileSize: String?
     let previewKind: PreviewKind?
@@ -86,6 +86,7 @@ struct FileItem: Identifiable, Hashable {
 
     init(url: URL) {
         self.url = url
+        self.icon = NSWorkspace.shared.icon(forFile: url.path)
 
         // Batch-fetch isDirectory + fileSize in one syscall.
         let resources = try? url.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey])
