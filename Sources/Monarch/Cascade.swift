@@ -784,11 +784,26 @@ final class CascadeModel: ObservableObject {
         let defaultDescending: Bool = (sortOrder == .dateModified || sortOrder == .dateCreated)
         let descending = UserDefaults.standard.object(forKey: UDKey.sortDescending) as? Bool ?? defaultDescending
 
-        // Sum direct-child file sizes from the already-fetched resource values.
-        let totalSize: Int64 = contents.reduce(0) { sum, url in
-            let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
-            return sum + Int64(size)
+        // Pre-fetch all file attributes in one pass so that sort comparators
+        // and the totalSize reduce can do plain dictionary lookups instead of
+        // calling resourceValues() O(N log N) times.
+        struct Attrs {
+            var modDate: Date
+            var createDate: Date
+            var fileSize: Int
         }
+        var attrs = [URL: Attrs](minimumCapacity: contents.count)
+        for url in contents {
+            let r = try? url.resourceValues(forKeys: [.contentModificationDateKey,
+                                                      .creationDateKey, .fileSizeKey])
+            attrs[url] = Attrs(
+                modDate:    r?.contentModificationDate ?? .distantPast,
+                createDate: r?.creationDate            ?? .distantPast,
+                fileSize:   r?.fileSize                ?? 0
+            )
+        }
+
+        let totalSize: Int64 = contents.reduce(0) { $0 + Int64(attrs[$1]?.fileSize ?? 0) }
 
         let allSorted = contents
             .map { FileItem(url: $0) }
@@ -800,17 +815,11 @@ final class CascadeModel: ObservableObject {
                 case .name:
                     ascending = a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
                 case .dateModified:
-                    let ad = (try? a.url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
-                    let bd = (try? b.url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
-                    ascending = ad < bd
+                    ascending = (attrs[a.url]?.modDate ?? .distantPast) < (attrs[b.url]?.modDate ?? .distantPast)
                 case .dateCreated:
-                    let ad = (try? a.url.resourceValues(forKeys: [.creationDateKey]))?.creationDate ?? .distantPast
-                    let bd = (try? b.url.resourceValues(forKeys: [.creationDateKey]))?.creationDate ?? .distantPast
-                    ascending = ad < bd
+                    ascending = (attrs[a.url]?.createDate ?? .distantPast) < (attrs[b.url]?.createDate ?? .distantPast)
                 case .fileType:
-                    let ae = a.url.pathExtension.lowercased()
-                    let be = b.url.pathExtension.lowercased()
-                    ascending = ae.localizedCaseInsensitiveCompare(be) == .orderedAscending
+                    ascending = a.url.pathExtension.localizedCaseInsensitiveCompare(b.url.pathExtension) == .orderedAscending
                 }
                 return descending ? !ascending : ascending
             }
@@ -827,9 +836,7 @@ final class CascadeModel: ObservableObject {
         let recentCandidates = allSorted
             .filter { !$0.isDirectory && !pinnedSet.contains($0.url.path) }
             .sorted { a, b in
-                let ad = (try? a.url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
-                let bd = (try? b.url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
-                return ad > bd
+                (attrs[a.url]?.modDate ?? .distantPast) > (attrs[b.url]?.modDate ?? .distantPast)
             }
         let recentItems: [FileItem]
         // Show Recent only when the folder has enough items to make it useful.
