@@ -9,12 +9,14 @@ enum PreviewKind {
     case text
     /// Rich document and misc formats rendered via QLPreviewView (docx, epub,
     /// pages, numbers, keynote, rtf, odt, webarchive, svg, raw photos, fonts,
-    /// 3D models, archives, etc.).
+    /// 3D models, etc.).
     case quicklook
     /// Video via QLPreviewView (gets a playable scrubber).
     case video
     /// Audio via QLPreviewView (play/scrub UI).
     case audio
+    /// Archives with a readable TOC (zip, tar, tar.gz, etc.).
+    case archive
 }
 
 private let imageExts: Set<String> = [
@@ -57,8 +59,11 @@ private let quicklookExts: Set<String> = [
     "usdz", "usd", "usda", "usdc", "obj", "stl", "dae",
     // Notebooks (rendered as JSON text by QL; good enough)
     "ipynb",
-    // Archives (QL shows file listing / metadata)
-    "zip", "tar", "gz", "tgz", "bz2", "7z", "rar", "xz"
+    // Formats without standard CLI tools — fall back to QL
+    "7z", "rar", "xz"
+]
+private let archiveExts: Set<String> = [
+    "zip", "tar", "gz", "tgz", "bz2"
 ]
 private let videoExts: Set<String> = [
     "mp4", "m4v", "mov", "avi", "mkv", "webm", "mpg", "mpeg", "3gp", "ogv", "wmv", "flv"
@@ -119,6 +124,7 @@ struct FileItem: Identifiable, Hashable {
         else if videoExts.contains(ext)        { self.previewKind = .video }
         else if audioExts.contains(ext)        { self.previewKind = .audio }
         else if quicklookExts.contains(ext)    { self.previewKind = .quicklook }
+        else if archiveExts.contains(ext)      { self.previewKind = .archive }
         else                                   { self.previewKind = nil }
 
         // imageDimensions — fast header-only CGImageSource read, images only.

@@ -192,16 +192,16 @@ private struct OnboardingEmptyView: View {
     var body: some View {
         ZStack(alignment: .topTrailing) {
             // Pulsing arrow nudges toward the ··· button in the top-right corner.
-            Image(systemName: "arrow.up.right")
+            Image(systemName: "arrow.up")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(Color.accentColor)
-                .offset(x: pulse ? 3 : 0, y: pulse ? -3 : 0)
+                .offset(x: 0, y: pulse ? -3 : 0)
                 .animation(
                     .easeInOut(duration: 0.65).repeatForever(autoreverses: true),
                     value: pulse
                 )
                 .padding(.top, 6)
-                .padding(.trailing, 6)
+                .padding(.trailing, 14)
 
             VStack(spacing: 8) {
                 Spacer()

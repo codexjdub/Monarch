@@ -50,6 +50,7 @@ struct PreviewLevelView: View {
         case .quicklook: return "doc"
         case .video:     return "film"
         case .audio:     return "waveform"
+        case .archive:   return "archivebox"
         }
     }
 
@@ -62,6 +63,7 @@ struct PreviewLevelView: View {
         case .quicklook: QuickLookPreviewView(url: url)
         case .video:     QuickLookPreviewView(url: url)
         case .audio:     QuickLookPreviewView(url: url)
+        case .archive:   ArchivePreviewView(url: url)
         }
     }
 }
@@ -223,5 +225,142 @@ struct QuickLookPreviewView: NSViewRepresentable {
 
     static func dismantleNSView(_ nsView: QLPreviewView, coordinator: ()) {
         nsView.close()
+    }
+}
+
+// MARK: - Archive TOC
+//
+// Reads the table of contents of a zip or tar archive off the main thread
+// using standard CLI tools — no decompression, just the entry list.
+
+private struct ArchiveEntry: Identifiable {
+    let id = UUID()
+    let path: String
+    var isDirectory: Bool { path.hasSuffix("/") }
+    var displayName: String {
+        let p = isDirectory ? String(path.dropLast()) : path
+        return URL(fileURLWithPath: p).lastPathComponent
+    }
+    var parentPath: String {
+        let p = isDirectory ? String(path.dropLast()) : path
+        let parent = URL(fileURLWithPath: p).deletingLastPathComponent().path
+        return (parent == "." || parent == "/") ? "" : parent
+    }
+    var sfIcon: String {
+        if isDirectory { return "folder" }
+        let ext = URL(fileURLWithPath: path).pathExtension.lowercased()
+        switch ext {
+        case "jpg","jpeg","png","gif","heic","heif","tiff","bmp","webp": return "photo"
+        case "pdf":                                                       return "doc.richtext"
+        case "mp4","m4v","mov","avi","mkv","webm":                       return "film"
+        case "mp3","m4a","aac","wav","aiff","flac":                      return "waveform"
+        case "zip","tar","gz","tgz","bz2","7z","rar":                    return "archivebox"
+        case "swift","py","js","ts","rb","go","rs","c","cpp","h":        return "doc.text"
+        default:                                                          return "doc"
+        }
+    }
+}
+
+struct ArchivePreviewView: View {
+    let url: URL
+    @State private var entries: [ArchiveEntry] = []
+    @State private var isLoading = true
+    @State private var failed = false
+
+    var body: some View {
+        Group {
+            if isLoading {
+                ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if failed {
+                VStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.system(size: 26)).foregroundStyle(.tertiary)
+                    Text("Could not read archive")
+                        .font(.system(size: 12)).foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if entries.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "archivebox")
+                        .font(.system(size: 26)).foregroundStyle(.tertiary)
+                    Text("Empty archive")
+                        .font(.system(size: 12)).foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                VStack(spacing: 0) {
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
+                            ForEach(entries) { entry in
+                                HStack(spacing: 7) {
+                                    Image(systemName: entry.sfIcon)
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(entry.isDirectory
+                                            ? Color.accentColor.opacity(0.8) : .secondary)
+                                        .frame(width: 14, alignment: .center)
+                                    Text(entry.displayName)
+                                        .font(.system(size: 12))
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                    Spacer()
+                                    if !entry.parentPath.isEmpty {
+                                        Text(entry.parentPath)
+                                            .font(.system(size: 10))
+                                            .foregroundStyle(.tertiary)
+                                            .lineLimit(1)
+                                            .truncationMode(.head)
+                                    }
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 4)
+                                Divider().padding(.leading, 33)
+                            }
+                        }
+                    }
+                    Divider()
+                    let fileCount = entries.filter { !$0.isDirectory }.count
+                    Text("\(fileCount) file\(fileCount == 1 ? "" : "s")")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .padding(.vertical, 5)
+                }
+            }
+        }
+        .onAppear(perform: load)
+    }
+
+    private func load() {
+        let fileURL = url
+        Task.detached(priority: .userInitiated) {
+            let ext = fileURL.pathExtension.lowercased()
+            let (lines, ok) = ext == "zip"
+                ? Self.run("/usr/bin/unzip", args: ["-Z1", fileURL.path])
+                : Self.run("/usr/bin/tar",   args: ["-tf",  fileURL.path])
+            let parsed = lines
+                .map  { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+                .map  { ArchiveEntry(path: $0) }
+            await MainActor.run {
+                self.entries = parsed
+                self.failed  = !ok && parsed.isEmpty
+                self.isLoading = false
+            }
+        }
+    }
+
+    /// Run an executable, capture stdout line by line. Returns (lines, success).
+    nonisolated private static func run(_ exe: String, args: [String]) -> ([String], Bool) {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: exe)
+        proc.arguments = args
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError  = Pipe()   // suppress stderr
+        do { try proc.run() } catch { return ([], false) }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        proc.waitUntilExit()
+        guard let output = String(data: data, encoding: .utf8) else { return ([], false) }
+        return (output.components(separatedBy: "\n"), proc.terminationStatus == 0)
     }
 }

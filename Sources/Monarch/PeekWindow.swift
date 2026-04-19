@@ -149,6 +149,8 @@ final class PeekWindowManager {
             return NSSize(width: 720, height: 480)
         case .audio:
             return NSSize(width: 480, height: 140)
+        case .archive:
+            return NSSize(width: 400, height: 500)
         }
     }
 
