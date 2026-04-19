@@ -43,10 +43,10 @@ struct LevelListView: View {
         if let state {
             if state.items.isEmpty {
                 Spacer()
-                Text(level == 0 ? "No folders yet" : "Empty folder")
+                Text(state.readError ? "Can't read folder" : (level == 0 ? "No folders yet" : "Empty folder"))
                     .foregroundStyle(.secondary)
                     .font(.system(size: 13))
-                if level == 0 {
+                if level == 0 && !state.readError {
                     Text("Click ··· to add a folder")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
@@ -364,7 +364,7 @@ struct LevelListBody: View {
         } else {
             VStack {
                 Spacer()
-                Text("Empty folder")
+                Text(state?.readError == true ? "Can't read folder" : "Empty folder")
                     .foregroundStyle(.secondary)
                     .font(.system(size: 13))
                 Spacer()

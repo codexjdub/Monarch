@@ -211,11 +211,14 @@ final class CascadeModel: ObservableObject {
         var content: Content
         /// Sum of direct-child file sizes (bytes). 0 for level 0 and preview levels.
         var totalSize: Int64
+        /// True when the folder could not be read (e.g. permission denied).
+        var readError: Bool
 
-        init(source: URL?, content: Content, totalSize: Int64 = 0) {
+        init(source: URL?, content: Content, totalSize: Int64 = 0, readError: Bool = false) {
             self.source = source
             self.content = content
             self.totalSize = totalSize
+            self.readError = readError
         }
 
         // Convenience accessors (return empty for preview levels).
@@ -232,11 +235,12 @@ final class CascadeModel: ObservableObject {
             return [:]
         }
         /// For .folder levels, swap in new items + sections without touching frames.
-        mutating func setContents(_ newItems: [FileItem], _ newSections: [Section], totalSize: Int64? = nil) {
+        mutating func setContents(_ newItems: [FileItem], _ newSections: [Section], totalSize: Int64? = nil, readError: Bool = false) {
             if case .folder(_, _, let frames) = content {
                 content = .folder(items: newItems, sections: newSections, rowFrames: frames)
             }
             if let totalSize { self.totalSize = totalSize }
+            self.readError = readError
         }
         /// For .folder levels, record a row's screen frame.
         mutating func setRowFrame(_ index: Int, _ frame: NSRect) {
@@ -406,7 +410,7 @@ final class CascadeModel: ObservableObject {
         // Reload.
         let result = CascadeModel.loadFolder(src)
         let newItems = result.items
-        levels[level].setContents(result.items, result.sections, totalSize: result.totalSize)
+        levels[level].setContents(result.items, result.sections, totalSize: result.totalSize, readError: result.readError)
 
         // Restore focus.
         if let focusedURL, let newIdx = newItems.firstIndex(where: { $0.url == focusedURL }) {
@@ -431,7 +435,7 @@ final class CascadeModel: ObservableObject {
         for i in 1..<levels.count {
             guard case .folder = levels[i].content, let f = levels[i].source else { continue }
             let result = CascadeModel.loadFolder(f)
-            levels[i].setContents(result.items, result.sections, totalSize: result.totalSize)
+            levels[i].setContents(result.items, result.sections, totalSize: result.totalSize, readError: result.readError)
         }
     }
 
@@ -640,7 +644,7 @@ final class CascadeModel: ObservableObject {
     private func openFolderPeek(atLevel level: Int, folder: URL, parentIndex: Int) {
         closePeeks(atLevelsGreaterThan: level - 1)
         let result = CascadeModel.loadFolder(folder)
-        let state = Level(source: folder, content: .folder(items: result.items, sections: result.sections, rowFrames: [:]), totalSize: result.totalSize)
+        let state = Level(source: folder, content: .folder(items: result.items, sections: result.sections, rowFrames: [:]), totalSize: result.totalSize, readError: result.readError)
         guard installLevel(state, atLevel: level, parentIndex: parentIndex) else { return }
         installWatcher(forLevel: level, url: folder)
         let content = AnyView(LevelListView(level: level, model: self))
@@ -763,15 +767,21 @@ final class CascadeModel: ObservableObject {
         let items: [FileItem]
         let sections: [Section]
         let totalSize: Int64
+        var readError: Bool = false
     }
 
     static func loadFolder(_ folder: URL) -> FolderContents {
         let fm = FileManager.default
         let keys: [URLResourceKey] = [.isDirectoryKey, .fileSizeKey,
                                       .contentModificationDateKey, .creationDateKey]
-        let contents = (try? fm.contentsOfDirectory(at: folder,
-                                                    includingPropertiesForKeys: keys,
-                                                    options: [])) ?? []
+        let contents: [URL]
+        do {
+            contents = try fm.contentsOfDirectory(at: folder,
+                                                  includingPropertiesForKeys: keys,
+                                                  options: [])
+        } catch {
+            return FolderContents(items: [], sections: [], totalSize: 0, readError: true)
+        }
         let sortOrder  = FileSortOrder(rawValue: UserDefaults.standard.string(forKey: UDKey.sortOrder) ?? "") ?? .name
         let showHidden = UserDefaults.standard.bool(forKey: UDKey.showHiddenFiles)
         let defaultDescending: Bool = (sortOrder == .dateModified || sortOrder == .dateCreated)
