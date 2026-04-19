@@ -346,9 +346,7 @@ class StatusItemController: NSObject {
             sortMenu.addItem(item)
         }
         sortMenu.addItem(.separator())
-        let defaultDescending = (currentSort == FileSortOrder.dateModified.rawValue
-                                 || currentSort == FileSortOrder.dateCreated.rawValue)
-        let descending = UserDefaults.standard.object(forKey: UDKey.sortDescending) as? Bool ?? defaultDescending
+        let descending = UserDefaults.standard.object(forKey: UDKey.sortDescending) as? Bool ?? isDescendingByDefault(for: currentSort)
         let reverseItem = NSMenuItem(title: "Reverse Order", action: #selector(toggleSortDirection), keyEquivalent: "")
         reverseItem.target = self
         reverseItem.state = descending ? .on : .off
@@ -409,11 +407,14 @@ class StatusItemController: NSObject {
 
     @objc private func toggleSortDirection() {
         let currentSort = UserDefaults.standard.string(forKey: UDKey.sortOrder) ?? FileSortOrder.name.rawValue
-        let defaultDescending = (currentSort == FileSortOrder.dateModified.rawValue
-                                 || currentSort == FileSortOrder.dateCreated.rawValue)
-        let current = UserDefaults.standard.object(forKey: UDKey.sortDescending) as? Bool ?? defaultDescending
+        let current = UserDefaults.standard.object(forKey: UDKey.sortDescending) as? Bool ?? isDescendingByDefault(for: currentSort)
         UserDefaults.standard.set(!current, forKey: UDKey.sortDescending)
         model.reloadAll()
+    }
+
+    /// Date-based sorts default to descending (newest first); all others default to ascending.
+    private func isDescendingByDefault(for sortRaw: String) -> Bool {
+        sortRaw == FileSortOrder.dateModified.rawValue || sortRaw == FileSortOrder.dateCreated.rawValue
     }
 
     @objc private func quitApp() {
