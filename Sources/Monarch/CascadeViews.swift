@@ -407,11 +407,15 @@ struct LevelListBody: View {
         .background(Color.clear)
     }
 
+    private static let byteFormatter: ByteCountFormatter = {
+        let f = ByteCountFormatter()
+        f.countStyle = .file
+        f.allowedUnits = [.useKB, .useMB, .useGB, .useTB]
+        return f
+    }()
+
     private func formatSize(_ bytes: Int64) -> String {
-        let formatter = ByteCountFormatter()
-        formatter.countStyle = .file
-        formatter.allowedUnits = [.useKB, .useMB, .useGB, .useTB]
-        return formatter.string(fromByteCount: bytes)
+        Self.byteFormatter.string(fromByteCount: bytes)
     }
 
     // MARK: - Scroll list
