@@ -48,16 +48,6 @@ Open via the **···** menu → **Preferences…**
 - **Launch at login** — start Monarch automatically when you log in
 - **Global hotkey** — record any key combo to open Monarch from anywhere (⌘, opens Preferences from the popover)
 
-## Icon regeneration
-
-After changing artwork in `Design/AppIcon.appiconset/`:
-
-```bash
-swift scripts/apply_w4.swift && iconutil -c icns Resources/AppIcon.iconset -o Resources/AppIcon.icns
-```
-
-See [Design/README.md](Design/README.md) for details.
-
 ## License
 
 MIT — see [LICENSE](LICENSE).
