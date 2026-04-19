@@ -186,7 +186,9 @@ final class CascadeModel: ObservableObject {
 
     struct Focus: Equatable {
         var level: Int
-        var index: Int   // -1 means no row focused in that window
+        var index: Int
+        /// Sentinel value meaning "no row is focused in this window".
+        static let noFocus = -1
     }
 
     /// A level renders one of two things: a folder's contents (list of rows),
@@ -257,7 +259,7 @@ final class CascadeModel: ObservableObject {
 
     // Published state — views render from this.
     @Published private(set) var levels: [Level] = []
-    @Published var focus: Focus = Focus(level: 0, index: -1)
+    @Published var focus: Focus = Focus(level: 0, index: Focus.noFocus)
     /// `pathIndices[L]` is the row at level L that currently has a child peek open
     /// at level L+1. Used for "on-path" highlighting and for restoring focus when
     /// backing out.
@@ -416,7 +418,7 @@ final class CascadeModel: ObservableObject {
         if let focusedURL, let newIdx = newItems.firstIndex(where: { $0.url == focusedURL }) {
             focus = Focus(level: level, index: newIdx)
         } else if focus.level == level {
-            focus = Focus(level: level, index: min(focus.index, max(newItems.count - 1, -1)))
+            focus = Focus(level: level, index: min(focus.index, max(newItems.count - 1, Focus.noFocus)))
         }
 
         // Restore path index — if the on-path child URL is gone, close its peek.
@@ -528,7 +530,7 @@ final class CascadeModel: ObservableObject {
         if level > 0, let parentIdx = pathIndices[level - 1] {
             focus = Focus(level: level - 1, index: parentIdx)
         } else if level == 0 {
-            focus = Focus(level: 0, index: -1)
+            focus = Focus(level: 0, index: Focus.noFocus)
         }
         // Close this level (and deeper) if it's a peek level. Level 0 is the
         // popover itself and must never be removed by close logic.
@@ -697,7 +699,7 @@ final class CascadeModel: ObservableObject {
         let clamped = max(level, 0)
         closePeeks(atLevelsGreaterThan: clamped)
         if focus.level > clamped {
-            let idx = pathIndices[clamped] ?? -1
+            let idx = pathIndices[clamped] ?? Focus.noFocus
             focus = Focus(level: clamped, index: idx)
         }
     }
@@ -1005,7 +1007,7 @@ final class WindowMouseTrackerNSView: NSView {
     private var level: Int = 0
     private weak var model: CascadeModel?
     private var area: NSTrackingArea?
-    private var lastIndex: Int = -2  // sentinel distinct from -1 (=no row)
+    private var lastIndex: Int? = nil
 
     func configure(level: Int, model: CascadeModel) {
         self.level = level
@@ -1035,7 +1037,7 @@ final class WindowMouseTrackerNSView: NSView {
     }
     override func mouseMoved(with event: NSEvent) { syncIfInside() }
     override func mouseExited(with event: NSEvent) {
-        lastIndex = -2
+        lastIndex = nil
         model?.mouseLeftWindow(level: level)
     }
 
@@ -1050,7 +1052,7 @@ final class WindowMouseTrackerNSView: NSView {
         model.mouseEnteredWindow(level: level)
         let mouseScreen = window.convertPoint(toScreen: mouseInWin)
         let idx = model.hitTestRow(level: level, at: mouseScreen)
-        if idx == lastIndex { return }
+        if lastIndex == idx { return }
         lastIndex = idx
         if idx >= 0 {
             model.mouseHover(level: level, index: idx)
