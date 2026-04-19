@@ -1,5 +1,4 @@
 import AppKit
-import UniformTypeIdentifiers
 
 /// A previewable file kind. Files with a non-nil previewKind open a preview
 /// peek to the right (same hover/keyboard mechanics as folder peeks).
