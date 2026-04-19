@@ -72,7 +72,11 @@ final class FolderWatcher {
 
     private func schedule() {
         pending?.cancel()
-        let task = DispatchWorkItem { @MainActor [weak self] in self?.onChange() }
+        let task = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            // Already dispatched to DispatchQueue.main — safe to assume isolation.
+            MainActor.assumeIsolated { self.onChange() }
+        }
         pending = task
         DispatchQueue.main.asyncAfter(deadline: .now() + debounce, execute: task)
     }
