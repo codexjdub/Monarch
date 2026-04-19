@@ -118,6 +118,10 @@ struct PDFPreviewView: NSViewRepresentable {
 struct TextPreviewView: NSViewRepresentable {
     let url: URL
 
+    /// Maximum bytes loaded into the preview pane. Large files are truncated
+    /// at this boundary to keep the NSTextView responsive.
+    private static let previewMaxBytes = 1_000_000
+
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSScrollView()
         scroll.hasVerticalScroller = true
@@ -168,7 +172,7 @@ struct TextPreviewView: NSViewRepresentable {
     private func loadAsync(into tv: NSTextView) {
         let fileURL = url
         DispatchQueue.global(qos: .userInitiated).async {
-            let s = Self.readTruncated(url: fileURL, maxBytes: 1_000_000)
+            let s = Self.readTruncated(url: fileURL, maxBytes: Self.previewMaxBytes)
             DispatchQueue.main.async {
                 tv.string = s
             }
@@ -185,7 +189,9 @@ struct TextPreviewView: NSViewRepresentable {
             ?? String(data: data, encoding: .isoLatin1)
             ?? ""
         if data.count >= maxBytes {
-            s += "\n\n… (truncated)"
+            let totalBytes = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+            let totalMB = Double(totalBytes) / 1_000_000
+            s += String(format: "\n\n… (showing first 1 MB of %.1f MB — open in editor to read full file)", totalMB)
         }
         return s
     }
