@@ -450,7 +450,8 @@ struct LevelListBody: View {
                     }
                 }
             }
-            .onChange(of: model.focus) { f in
+            .onChange(of: model.keyboardFocusVersion) { _ in
+                let f = model.focus
                 guard f.level == level,
                       state.items.indices.contains(f.index) else { return }
                 withAnimation(.none) {

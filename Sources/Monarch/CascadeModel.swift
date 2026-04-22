@@ -25,6 +25,10 @@ final class CascadeModel: ObservableObject {
     // Published state — views render from this.
     @Published private(set) var levels: [Level] = []
     @Published var focus: Focus = Focus(level: 0, index: Focus.noFocus)
+    /// Incremented only by keyboard navigation. `scrollView` observes this to
+    /// scroll the focused row into view — mouse hover updates `focus` too but
+    /// must never trigger an auto-scroll.
+    @Published private(set) var keyboardFocusVersion: Int = 0
     /// `pathIndices[L]` is the row at level L that currently has a child peek open
     /// at level L+1. Used for "on-path" highlighting and for restoring focus when
     /// backing out.
@@ -350,6 +354,12 @@ final class CascadeModel: ObservableObject {
 
     // MARK: - Keyboard inputs
 
+    /// Set focus and mark it as keyboard-driven so the scroll view reacts.
+    private func setKeyboardFocus(_ f: Focus) {
+        focus = f
+        keyboardFocusVersion &+= 1
+    }
+
     func keyUp() {
         let l = focus.level
         guard levels.indices.contains(l) else { return }
@@ -359,7 +369,7 @@ final class CascadeModel: ObservableObject {
         pendingClose?.cancel(); pendingClose = nil
         // No focus yet → ↑ jumps to last item; otherwise move up, clamped at 0.
         let next = focus.index < 0 ? n - 1 : max(0, focus.index - 1)
-        focus = Focus(level: l, index: next)
+        setKeyboardFocus(Focus(level: l, index: next))
     }
 
     func keyDown() {
@@ -371,7 +381,7 @@ final class CascadeModel: ObservableObject {
         pendingClose?.cancel(); pendingClose = nil
         // No focus yet → ↓ jumps to first item; otherwise move down, clamped at end.
         let next = focus.index < 0 ? 0 : min(n - 1, focus.index + 1)
-        focus = Focus(level: l, index: next)
+        setKeyboardFocus(Focus(level: l, index: next))
     }
 
     func keyRight() { keyboardDrillIn() }
@@ -412,7 +422,7 @@ final class CascadeModel: ObservableObject {
         if item.isDirectory {
             openFolderPeek(atLevel: l + 1, folder: item.url, parentIndex: focus.index)
             // Keyboard → on folder jumps focus into the new peek (spec B).
-            focus = Focus(level: l + 1, index: 0)
+            setKeyboardFocus(Focus(level: l + 1, index: 0))
         } else if let kind = item.previewKind {
             openPreviewPeek(atLevel: l + 1, url: item.url, kind: kind, parentIndex: focus.index)
             // Preview has no rows; focus stays on the parent row.

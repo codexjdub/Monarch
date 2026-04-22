@@ -231,13 +231,17 @@ extension DraggableNSView /* Context Menu */ {
             menu.addItem(withTitle: "Quick Look", action: #selector(showQuickLook), keyEquivalent: " ").target = self
         }
 
-        // Show in Finder / Open With
+        // Show in Finder / Open With / Open in Terminal
         if urlsToAct.count == 1 {
             menu.addItem(withTitle: "Show in Finder", action: #selector(showInFinder), keyEquivalent: "").target = self
             if !item.isDirectory, let openWithMenu = buildOpenWithMenu(for: item.url) {
                 let owItem = NSMenuItem(title: "Open With", action: nil, keyEquivalent: "")
                 owItem.submenu = openWithMenu
                 menu.addItem(owItem)
+            }
+            if item.isDirectory {
+                let terminalName = TerminalApp.resolved().rawValue
+                menu.addItem(withTitle: "Open in \(terminalName)", action: #selector(openInTerminal), keyEquivalent: "").target = self
             }
         }
 
@@ -382,6 +386,11 @@ extension DraggableNSView /* Actions */ {
     @objc private func showInFinder() {
         guard let url = fileItem?.url else { return }
         NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    @objc private func openInTerminal() {
+        guard let url = fileItem?.url, fileItem?.isDirectory == true else { return }
+        TerminalApp.resolved().open(folder: url)
     }
 
     @objc private func copyFiles() {

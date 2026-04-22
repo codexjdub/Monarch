@@ -58,7 +58,7 @@ struct PreviewLevelView: View {
         switch kind {
         case .image:     ImagePreviewView(url: url)
         case .pdf:       PDFPreviewView(url: url)
-        case .markdown:  TextPreviewView(url: url)
+        case .markdown:  MarkdownPreviewView(url: url)
         case .text:      TextPreviewView(url: url)
         case .quicklook: QuickLookPreviewView(url: url)
         case .video:     QuickLookPreviewView(url: url)
@@ -225,6 +225,52 @@ struct QuickLookPreviewView: NSViewRepresentable {
 
     static func dismantleNSView(_ nsView: QLPreviewView, coordinator: ()) {
         nsView.close()
+    }
+}
+
+// MARK: - Markdown
+
+struct MarkdownPreviewView: View {
+    let url: URL
+    @State private var content: AttributedString = .init()
+    @State private var isLoading = true
+
+    var body: some View {
+        ScrollView {
+            if isLoading {
+                ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(.top, 40)
+            } else {
+                Text(content)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(16)
+            }
+        }
+        .background(Color(NSColor.windowBackgroundColor))
+        .onAppear(perform: load)
+    }
+
+    private func load() {
+        let fileURL = url
+        Task.detached(priority: .userInitiated) {
+            let raw = (try? String(contentsOf: fileURL, encoding: .utf8))
+                   ?? (try? String(contentsOf: fileURL, encoding: .isoLatin1))
+                   ?? ""
+            let attributed = (try? AttributedString(
+                markdown: raw,
+                options: .init(
+                    allowsExtendedAttributes: true,
+                    interpretedSyntax: .inlineOnlyPreservingWhitespace,
+                    failurePolicy: .returnPartiallyParsedIfPossible
+                )
+            )) ?? AttributedString(raw)
+            await MainActor.run {
+                self.content = attributed
+                self.isLoading = false
+            }
+        }
     }
 }
 

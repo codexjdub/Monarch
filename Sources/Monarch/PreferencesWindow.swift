@@ -61,7 +61,9 @@ struct PreferencesView: View {
     @AppStorage(UDKey.showFooterBar) private var showFooterBar: Bool = true
     @AppStorage(UDKey.rowDensity) private var densityRaw: String = RowDensity.medium.rawValue
     @AppStorage(UDKey.appearanceMode) private var appearanceModeRaw: String = AppearanceMode.system.rawValue
+    @AppStorage(UDKey.preferredTerminal) private var preferredTerminal: String = ""
     @State private var launchAtLogin: Bool = PreferencesView.readLaunchAtLogin()
+    private var installedTerminals: [TerminalApp] { TerminalApp.installed }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -181,6 +183,30 @@ struct PreferencesView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .padding(.top, -10)
+
+                if installedTerminals.count > 1 {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text("Preferred terminal")
+                            Spacer()
+                            Picker("", selection: $preferredTerminal) {
+                                ForEach(installedTerminals) { app in
+                                    HStack(spacing: 5) {
+                                        Image(nsImage: NSWorkspace.shared.icon(forFile: app.appPath)
+                                            .resizedCopy(to: NSSize(width: 17, height: 17)))
+                                        Text(app.rawValue)
+                                    }
+                                    .tag(app.rawValue)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .frame(width: 150)
+                        }
+                        Text("Used for \"Open in Terminal\" in the right-click menu.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
             .padding(.horizontal, 20)
             .padding(.top, 16)
