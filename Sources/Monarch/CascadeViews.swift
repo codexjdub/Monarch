@@ -33,9 +33,12 @@ struct LevelListView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
         } else {
-            BreadcrumbView(model: model, currentLevel: level)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
+            HStack(spacing: 0) {
+                BreadcrumbView(model: model, currentLevel: level)
+                SortMenuButton(level: level, model: model)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
         }
     }
 
@@ -181,6 +184,41 @@ struct CascadeRootView: View {
                 onResizeEnded: onResizeEnded
             )
         }
+    }
+}
+
+// MARK: - Sort menu button
+
+private struct SortMenuButton: View {
+    let level: Int
+    @ObservedObject var model: CascadeModel
+
+    var body: some View {
+        let (currentOrder, descending) = model.sortState(forLevel: level)
+        Menu {
+            ForEach(FileSortOrder.allCases, id: \.rawValue) { order in
+                Button {
+                    let newDescending = (currentOrder == order)
+                        ? !descending
+                        : (order == .dateModified || order == .dateCreated)
+                    model.setSort(order: order, descending: newDescending, forLevel: level)
+                } label: {
+                    HStack {
+                        Text(order.label)
+                        if currentOrder == order {
+                            Image(systemName: descending ? "chevron.down" : "chevron.up")
+                        }
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "arrow.up.arrow.down")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.tertiary)
+                .padding(.leading, 6)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
     }
 }
 

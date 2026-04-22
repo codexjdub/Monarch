@@ -7,15 +7,48 @@ import AppKit
 // live in HotkeyManager.swift because they're tightly coupled to that subsystem.
 
 enum UDKey {
-    static let appearanceMode    = "appearanceMode"
-    static let rowDensity        = "rowDensity"
-    static let showFooterBar     = "showFooterBar"
-    static let sortOrder         = "sortOrder"
-    static let sortDescending    = "sortDescending"
-    static let showHiddenFiles   = "showHiddenFiles"
-    static let popoverWidth      = "popoverWidth"
-    static let popoverHeight     = "popoverHeight"
-    static let preferredTerminal = "preferredTerminal"
+    static let appearanceMode       = "appearanceMode"
+    static let rowDensity           = "rowDensity"
+    static let showFooterBar        = "showFooterBar"
+    static let sortOrder            = "sortOrder"
+    static let sortDescending       = "sortDescending"
+    static let showHiddenFiles      = "showHiddenFiles"
+    static let popoverWidth         = "popoverWidth"
+    static let popoverHeight        = "popoverHeight"
+    static let preferredTerminal    = "preferredTerminal"
+    static let perFolderSortOrder   = "perFolderSortOrder"
+    static let perFolderDescending  = "perFolderDescending"
+}
+
+// MARK: - Per-folder sort helpers
+
+extension UserDefaults {
+    /// Sort order for a specific folder, falling back to the global setting.
+    func sortOrder(for url: URL) -> FileSortOrder {
+        let dict = dictionary(forKey: UDKey.perFolderSortOrder) as? [String: String] ?? [:]
+        if let raw = dict[url.path], let order = FileSortOrder(rawValue: raw) { return order }
+        return FileSortOrder(rawValue: string(forKey: UDKey.sortOrder) ?? "") ?? .name
+    }
+
+    /// Sort direction for a specific folder, falling back to the global setting.
+    func sortDescending(for url: URL) -> Bool {
+        let dict = dictionary(forKey: UDKey.perFolderDescending) as? [String: Bool] ?? [:]
+        if let val = dict[url.path] { return val }
+        let order = sortOrder(for: url)
+        return (object(forKey: UDKey.sortDescending) as? Bool)
+            ?? (order == .dateModified || order == .dateCreated)
+    }
+
+    /// Persist sort order + direction for a specific folder.
+    func setSortOrder(_ order: FileSortOrder, descending: Bool, for url: URL) {
+        var orders = dictionary(forKey: UDKey.perFolderSortOrder) as? [String: String] ?? [:]
+        orders[url.path] = order.rawValue
+        set(orders, forKey: UDKey.perFolderSortOrder)
+
+        var descs = dictionary(forKey: UDKey.perFolderDescending) as? [String: Bool] ?? [:]
+        descs[url.path] = descending
+        set(descs, forKey: UDKey.perFolderDescending)
+    }
 }
 
 // MARK: - Terminal app

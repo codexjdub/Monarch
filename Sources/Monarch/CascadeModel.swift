@@ -74,10 +74,9 @@ final class CascadeModel: ObservableObject {
     /// inputs on main, then runs the actual filesystem work in a detached task.
     private func loadFolderAsync(_ folder: URL) async -> FolderContents {
         let pinnedURLs = PinStore.shared.pinned(in: folder)
-        let sortOrder  = FileSortOrder(rawValue: UserDefaults.standard.string(forKey: UDKey.sortOrder) ?? "") ?? .name
+        let sortOrder  = UserDefaults.standard.sortOrder(for: folder)
+        let descending = UserDefaults.standard.sortDescending(for: folder)
         let showHidden = UserDefaults.standard.bool(forKey: UDKey.showHiddenFiles)
-        let defaultDescending: Bool = (sortOrder == .dateModified || sortOrder == .dateCreated)
-        let descending = UserDefaults.standard.object(forKey: UDKey.sortDescending) as? Bool ?? defaultDescending
         return await Task.detached(priority: .userInitiated) {
             CascadeModel.loadFolder(folder,
                                     pinnedURLs: pinnedURLs,
@@ -85,6 +84,23 @@ final class CascadeModel: ObservableObject {
                                     showHidden: showHidden,
                                     descending: descending)
         }.value
+    }
+
+    /// Change sort order for the folder shown at `level` and reload.
+    func setSort(order: FileSortOrder, descending: Bool, forLevel level: Int) {
+        guard levels.indices.contains(level),
+              let folder = levels[level].source else { return }
+        UserDefaults.standard.setSortOrder(order, descending: descending, for: folder)
+        Task { await reloadLevelPreservingFocus(level) }
+    }
+
+    /// Current sort state for the folder at `level`.
+    func sortState(forLevel level: Int) -> (order: FileSortOrder, descending: Bool) {
+        guard levels.indices.contains(level), let folder = levels[level].source else {
+            return (.name, false)
+        }
+        return (UserDefaults.standard.sortOrder(for: folder),
+                UserDefaults.standard.sortDescending(for: folder))
     }
 
     // Timing
