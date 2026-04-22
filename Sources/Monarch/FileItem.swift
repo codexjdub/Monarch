@@ -72,12 +72,22 @@ private let audioExts: Set<String> = [
     "mp3", "m4a", "aac", "wav", "aiff", "aif", "flac", "ogg", "oga", "opus", "wma"
 ]
 
+enum FileItemRole {
+    case standard
+    case rootShortcut
+    case frequent
+}
+
 struct FileItem: Identifiable, Hashable {
     let id = UUID()
     let url: URL
+    let role: FileItemRole
+    let displayNameOverride: String?
+    let subtitleOverride: String?
 
     // Cheap derived properties — computed on every access (trivial cost).
     var name: String { url.lastPathComponent }
+    var displayName: String { displayNameOverride ?? name }
     var isHidden: Bool { name.hasPrefix(".") }
 
     // Cached at init — these involve filesystem or image-header reads that
@@ -97,8 +107,16 @@ struct FileItem: Identifiable, Hashable {
     /// re-stat'ing on every row render.
     let contentModifiedAt: Date?
 
-    init(url: URL) {
+    init(url: URL,
+         role: FileItemRole = .standard,
+         displayNameOverride: String? = nil,
+         subtitleOverride: String? = nil) {
         self.url = url
+        self.role = role
+        let trimmedDisplayName = displayNameOverride?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        self.displayNameOverride = trimmedDisplayName.isEmpty ? nil : trimmedDisplayName
+        let trimmedSubtitle = subtitleOverride?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        self.subtitleOverride = trimmedSubtitle.isEmpty ? nil : trimmedSubtitle
         self.icon = NSWorkspace.shared.icon(forFile: url.path)
         self.exists = FileManager.default.fileExists(atPath: url.path)
 

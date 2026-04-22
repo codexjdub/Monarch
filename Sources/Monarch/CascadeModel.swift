@@ -21,7 +21,6 @@ import Combine
 
 @MainActor
 final class CascadeModel: ObservableObject {
-
     // Published state — views render from this.
     @Published private(set) var levels: [Level] = []
     @Published var focus: Focus = Focus(level: 0, index: Focus.noFocus)
@@ -41,7 +40,10 @@ final class CascadeModel: ObservableObject {
 
     // Collaborators
     private let shortcutStore: ShortcutStore
+    private let frequentStore = FrequentStore.shared
     private var storeSub: AnyCancellable?
+    private var frequentSectionObserver: NSKeyValueObservation?
+    private var frequentDisplayLimitObserver: NSKeyValueObservation?
     let onDismiss: () -> Void
 
     /// Called when "Remove from Monarch" is triggered on a root row.
@@ -145,6 +147,19 @@ final class CascadeModel: ObservableObject {
         storeSub = shortcutStore.$shortcuts
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.rebuildLevel0() }
+        frequentStore.onChanged = { [weak self] in
+            self?.rebuildLevel0()
+        }
+        frequentSectionObserver = UserDefaults.standard.observe(
+            \.showFrequentSection, options: [.new]
+        ) { [weak self] _, _ in
+            Task { @MainActor in self?.rebuildLevel0() }
+        }
+        frequentDisplayLimitObserver = UserDefaults.standard.observe(
+            \.frequentDisplayLimit, options: [.new]
+        ) { [weak self] _, _ in
+            Task { @MainActor in self?.rebuildLevel0() }
+        }
         PinStore.shared.onPinsChanged = { [weak self] folder in
             Task { @MainActor in self?.pinsChanged(folder: folder) }
         }
@@ -157,12 +172,88 @@ final class CascadeModel: ObservableObject {
         }
     }
 
+    private func makeRootItem(_ shortcut: RootShortcut) -> FileItem {
+        FileItem(
+            url: shortcut.url,
+            role: .rootShortcut,
+            displayNameOverride: shortcut.alias,
+            subtitleOverride: shortcut.hasAlias
+                ? NSString(string: shortcut.url.path).abbreviatingWithTildeInPath
+                : nil
+        )
+    }
+
+    private func makeFrequentItem(_ url: URL) -> FileItem {
+        FileItem(
+            url: url,
+            role: .frequent,
+            subtitleOverride: FrequentStore.subtitle(for: url)
+        )
+    }
+
     private func rebuildLevel0() {
-        let items = shortcutStore.shortcuts.map { FileItem(url: $0) }
-        if levels.isEmpty {
-            levels = [Level(source: nil, content: .folder(items: items, sections: [], rowFrames: [:]))]
+        let focusedURL: URL? = {
+            if focus.level == 0, levels.indices.contains(0), levels[0].items.indices.contains(focus.index) {
+                return levels[0].items[focus.index].url
+            }
+            return nil
+        }()
+        let pathURL: URL? = {
+            if levels.indices.contains(0),
+               let idx = pathIndices[0],
+               levels[0].items.indices.contains(idx) {
+                return levels[0].items[idx].url
+            }
+            return nil
+        }()
+
+        let rootItems = shortcutStore.shortcuts.map(makeRootItem)
+        let rootURLs = shortcutStore.shortcuts.map(\.url)
+        let rootPaths = Set(rootURLs.map(\.path))
+        let frequentItems: [FileItem]
+        if UserDefaults.standard.showFrequentSection {
+            frequentItems = frequentStore
+                .topItems(within: rootURLs, excluding: rootPaths, limit: UserDefaults.standard.frequentDisplayLimit)
+                .map(makeFrequentItem)
         } else {
-            levels[0].setContents(items, [])
+            frequentItems = []
+        }
+
+        let items: [FileItem]
+        let sections: [Section]
+        if frequentItems.isEmpty {
+            items = rootItems
+            sections = []
+        } else {
+            items = frequentItems + rootItems
+            var builtSections: [Section] = [
+                Section(title: "Frequent", range: 0..<frequentItems.count)
+            ]
+            if !rootItems.isEmpty {
+                builtSections.append(Section(title: "Shortcuts", range: frequentItems.count..<items.count))
+            }
+            sections = builtSections
+        }
+
+        if levels.isEmpty {
+            levels = [Level(source: nil, content: .folder(items: items, sections: sections, rowFrames: [:]))]
+        } else {
+            levels[0].setContents(items, sections)
+        }
+
+        if let focusedURL, let newIdx = items.firstIndex(where: { $0.url == focusedURL }) {
+            focus = Focus(level: 0, index: newIdx)
+        } else if focus.level == 0 {
+            focus = Focus(level: 0, index: min(focus.index, max(items.count - 1, Focus.noFocus)))
+        }
+
+        if let pathURL {
+            if let newIdx = items.firstIndex(where: { $0.url == pathURL }) {
+                pathIndices[0] = newIdx
+            } else {
+                pathIndices[0] = nil
+                closeDeeperThan(0)
+            }
         }
         // Watch directory shortcuts so drilling in reflects live changes.
         // File shortcuts don't need watching (no folder listing to refresh).
@@ -171,9 +262,9 @@ final class CascadeModel: ObservableObject {
 
     private func installWatchersForLevel0() {
         var ws: [FolderWatcher] = []
-        for shortcut in shortcutStore.shortcuts where shortcut.hasDirectoryPath {
-            ws.append(FolderWatcher(url: shortcut) { [weak self] in
-                self?.folderDidChange(url: shortcut)
+        for shortcut in shortcutStore.shortcuts where shortcut.url.hasDirectoryPath {
+            ws.append(FolderWatcher(url: shortcut.url) { [weak self] in
+                self?.folderDidChange(url: shortcut.url)
             })
         }
         watchers[0] = ws
@@ -295,7 +386,7 @@ final class CascadeModel: ObservableObject {
         pendingOpen?.cancel(); pendingOpen = nil
 
         // Broken root shortcut → no peek, just trim any deeper stale window.
-        if level == 0, !item.exists {
+        if level == 0, item.role == .rootShortcut, !item.exists {
             closeDeeperThan(level)
             return
         }
@@ -408,13 +499,14 @@ final class CascadeModel: ObservableObject {
         guard levels.indices.contains(l),
               levels[l].items.indices.contains(focus.index) else { return }
         let item = levels[l].items[focus.index]
-        if l == 0, !item.exists {
+        if l == 0, item.role == .rootShortcut, !item.exists {
             handleMissingShortcut(url: item.url)
             return
         }
         if item.isDirectory {
             keyboardDrillIn()
         } else {
+            frequentStore.recordAccess(item.url)
             NSWorkspace.shared.open(item.url)
             onDismiss()
         }
@@ -478,12 +570,13 @@ final class CascadeModel: ObservableObject {
         let item = levels[level].items[index]
         // Broken root shortcut — offer Remove / Locate instead of silently
         // failing (NSWorkspace.open on a nonexistent URL does nothing visible).
-        if level == 0, !item.exists {
+        if level == 0, item.role == .rootShortcut, !item.exists {
             handleMissingShortcut(url: item.url)
             return
         }
         // Everything opens in the default app on click — folders open in
         // Finder, files in their associated app. Hover handles peeks.
+        frequentStore.recordAccess(item.url)
         NSWorkspace.shared.open(item.url)
         onDismiss()
     }
@@ -636,12 +729,12 @@ final class CascadeModel: ObservableObject {
         focus = Focus(level: 0, index: -1)
     }
 
-    // Convenience: the URL of the focused level-0 shortcut, if any.
-    var focusedRootShortcut: URL? {
+    // Convenience: the focused level-0 shortcut, if any.
+    var focusedRootShortcut: RootShortcut? {
         guard focus.level == 0,
               levels.indices.contains(0),
               levels[0].items.indices.contains(focus.index) else { return nil }
-        return levels[0].items[focus.index].url
+        return shortcutStore.shortcut(for: levels[0].items[focus.index].url)
     }
 
     func moveRoot(from: Int, to: Int) {
@@ -652,7 +745,11 @@ final class CascadeModel: ObservableObject {
         shortcutStore.add(url)
     }
 
+    func setRootDisplayName(_ displayName: String?, for url: URL) {
+        shortcutStore.setAlias(displayName, for: url)
+    }
+
     func isInRoot(_ url: URL) -> Bool {
-        shortcutStore.shortcuts.contains(url)
+        shortcutStore.shortcuts.contains { $0.url == url }
     }
 }

@@ -293,7 +293,10 @@ struct LevelListBody: View {
     private var displayItems: [FileItem] {
         guard let s = state else { return [] }
         guard isFiltering else { return s.items }
-        return s.items.filter { $0.name.localizedCaseInsensitiveContains(activeFilter) }
+        return s.items.filter {
+            $0.displayName.localizedCaseInsensitiveContains(activeFilter)
+            || $0.name.localizedCaseInsensitiveContains(activeFilter)
+        }
     }
 
     private var showFooter: Bool {
@@ -503,16 +506,48 @@ struct LevelListBody: View {
 
     @ViewBuilder
     private func sectionHeader(_ title: String) -> some View {
-        HStack {
-            Text(title)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.tertiary)
-                .textCase(.uppercase)
-            Spacer()
+        if title == "Frequent" {
+            HStack(spacing: 6) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                Text("Frequent")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 8)
+            .padding(.bottom, 4)
+        } else if title == "Shortcuts" {
+            VStack(spacing: 0) {
+                Divider()
+                    .padding(.leading, 12)
+                    .padding(.trailing, 12)
+
+                HStack {
+                    Text("Your Shortcuts")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+                .padding(.horizontal, 12)
+                .padding(.top, 10)
+                .padding(.bottom, 2)
+            }
+            .padding(.top, 10)
+        } else {
+            HStack {
+                Text(title)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+                    .textCase(.uppercase)
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 8)
+            .padding(.bottom, 2)
         }
-        .padding(.horizontal, 12)
-        .padding(.top, 8)
-        .padding(.bottom, 2)
     }
 
     @ViewBuilder
@@ -527,11 +562,17 @@ struct LevelListBody: View {
             onSpringLoad: item.isDirectory
                 ? { model.springLoadFolder(level: level, index: idx) }
                 : nil,
-            removeFromRootHandler: level == 0
+            removeFromRootHandler: level == 0 && item.role == .rootShortcut
                 ? { model.onRemoveRoot?(item.url) }
                 : nil,
-            addToRootHandler: level > 0 && !model.isInRoot(item.url)
+            updateRootDisplayNameHandler: level == 0 && item.role == .rootShortcut
+                ? { url, displayName in model.setRootDisplayName(displayName, for: url) }
+                : nil,
+            addToRootHandler: item.role != .rootShortcut && !model.isInRoot(item.url)
                 ? { model.addToRoot($0) }
+                : nil,
+            hideFromFrequentHandler: item.role == .frequent
+                ? { FrequentStore.shared.hide(item.url) }
                 : nil
         )
         .frame(height: density.rowHeight)

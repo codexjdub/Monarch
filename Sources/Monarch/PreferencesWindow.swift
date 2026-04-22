@@ -59,10 +59,13 @@ struct PreferencesView: View {
     @AppStorage(kHotkeyDisplayKey) private var hotkeyDisplay: String = defaultHotkeyDisplay
 
     @AppStorage(UDKey.showFooterBar) private var showFooterBar: Bool = true
+    @AppStorage(UDKey.showFrequentSection) private var showFrequentSection: Bool = true
+    @AppStorage(UDKey.frequentDisplayLimit) private var frequentDisplayLimit: Int = FrequentSectionConfig.defaultDisplayLimit
     @AppStorage(UDKey.rowDensity) private var densityRaw: String = RowDensity.medium.rawValue
     @AppStorage(UDKey.appearanceMode) private var appearanceModeRaw: String = AppearanceMode.system.rawValue
     @AppStorage(UDKey.preferredTerminal) private var preferredTerminal: String = ""
     @State private var launchAtLogin: Bool = PreferencesView.readLaunchAtLogin()
+    @State private var showingResetFrequentAlert = false
     private var installedTerminals: [TerminalApp] { TerminalApp.installed }
 
     var body: some View {
@@ -80,22 +83,22 @@ struct PreferencesView: View {
                         .padding(8)
                 } else {
                     List {
-                        ForEach(store.shortcuts, id: \.self) { url in
+                        ForEach(store.shortcuts, id: \.url) { shortcut in
                             HStack(spacing: 8) {
-                                Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                                Image(nsImage: NSWorkspace.shared.icon(forFile: shortcut.url.path))
                                     .resizable()
                                     .frame(width: 18, height: 18)
                                 VStack(alignment: .leading, spacing: 1) {
-                                    Text(url.lastPathComponent)
+                                    Text(shortcut.displayName)
                                         .lineLimit(1)
-                                    Text(url.deletingLastPathComponent().path)
+                                    Text(shortcut.hasAlias ? shortcut.url.path : shortcut.url.deletingLastPathComponent().path)
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                         .lineLimit(1)
                                 }
                                 Spacer()
                                 Button {
-                                    store.remove(url)
+                                    store.remove(shortcut.url)
                                 } label: {
                                     Image(systemName: "minus.circle.fill")
                                         .foregroundStyle(.red.opacity(0.8))
@@ -166,6 +169,36 @@ struct PreferencesView: View {
                         PreferencesView.writeLaunchAtLogin(newValue)
                     }
 
+                VStack(alignment: .leading, spacing: 4) {
+                    Toggle("Show Frequent section", isOn: $showFrequentSection)
+                    Text("Show a Frequent section at the top of Monarch's main list.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    HStack {
+                        Text("Items to show")
+                        Spacer()
+                        Text("\(frequentDisplayLimit)")
+                            .font(.system(size: 13, weight: .medium, design: .monospaced))
+                            .frame(minWidth: 24, alignment: .trailing)
+                        Stepper("", value: $frequentDisplayLimit, in: FrequentSectionConfig.displayLimitRange)
+                        .labelsHidden()
+                    }
+                    .disabled(!showFrequentSection)
+                    .opacity(showFrequentSection ? 1 : 0.5)
+                    Text("Items need at least \(FrequentStore.minimumQualifiedAccessCount) opens before they appear.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    HStack {
+                        Button("Reset Frequent…") {
+                            showingResetFrequentAlert = true
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(.red)
+                        Spacer()
+                    }
+                    .padding(.leading, 16)
+                }
+
                 HStack {
                     Toggle(isOn: $hotkeyEnabled) {
                         Text("Global hotkey")
@@ -200,12 +233,14 @@ struct PreferencesView: View {
                                 }
                             }
                             .pickerStyle(.menu)
-                            .frame(width: 150)
+                            .frame(width: 150, alignment: .trailing)
                         }
+                        .frame(maxWidth: .infinity)
                         Text("Used for \"Open in Terminal\" in the right-click menu.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
             .padding(.horizontal, 20)
@@ -213,6 +248,14 @@ struct PreferencesView: View {
             .padding(.bottom, 28)
         }
         .frame(minWidth: 420, minHeight: 400)
+        .alert("Reset Frequent?", isPresented: $showingResetFrequentAlert) {
+            Button("Reset", role: .destructive) {
+                FrequentStore.shared.clear()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This clears Monarch's Frequent ranking and starts it over from scratch.")
+        }
     }
 
     // MARK: - Launch at Login (SMAppService, macOS 13+)

@@ -19,7 +19,9 @@ class DraggableNSView: NSView, NSDraggingSource {
     var selectionState: SelectionState?
     var parentFolder: URL?
     var removeFromRootHandler: (() -> Void)?
+    var updateRootDisplayNameHandler: ((URL, String?) -> Void)?
     var addToRootHandler: ((URL) -> Void)?
+    var hideFromFrequentHandler: (() -> Void)?
     /// Called when a drag hovers this folder row long enough to spring-load.
     var onSpringLoad: (() -> Void)?
 
@@ -210,50 +212,101 @@ extension DraggableNSView /* Drop Target */ {
 
 extension DraggableNSView /* Context Menu */ {
 
+    private enum ContextMenuKind {
+        case multiSelection
+        case rootShortcut
+        case frequent
+        case standard
+    }
+
     override func rightMouseDown(with event: NSEvent) {
         guard let item = fileItem else { return }
+        let urlsToAct = contextMenuURLs(for: item)
+        let menu = buildContextMenu(for: item, urlsToAct: urlsToAct)
+        NSMenu.popUpContextMenu(menu, with: event, for: self)
+    }
 
-        let urlsToAct: [URL] = {
-            if let sel = selectionState, sel.isSelected(item.url), sel.selectedURLs.count > 1 {
-                return Array(sel.selectedURLs)
-            }
-            return [item.url]
-        }()
+    private func contextMenuURLs(for item: FileItem) -> [URL] {
+        if let sel = selectionState, sel.isSelected(item.url), sel.selectedURLs.count > 1 {
+            return Array(sel.selectedURLs)
+        }
+        return [item.url]
+    }
 
+    private func buildContextMenu(for item: FileItem, urlsToAct: [URL]) -> NSMenu {
         let menu = NSMenu()
+        switch contextMenuKind(for: item, urlsToAct: urlsToAct) {
+        case .multiSelection:
+            appendSection(to: menu) { self.addOpenItems(to: menu, item: item, urlsToAct: urlsToAct, includeQuickLook: false, includeFinderAndAppActions: false) }
+            appendSection(to: menu) { self.addCopyAndShareItems(to: menu, item: item, urlsToAct: urlsToAct) }
+            appendSection(to: menu) { self.addTrashItem(to: menu, urlsToAct: urlsToAct) }
+        case .rootShortcut:
+            appendSection(to: menu) { self.addOpenItems(to: menu, item: item, urlsToAct: urlsToAct) }
+            appendSection(to: menu) { self.addCopyAndShareItems(to: menu, item: item, urlsToAct: urlsToAct) }
+            appendSection(to: menu) { self.addDisplayNameItems(to: menu, item: item, urlsToAct: urlsToAct) }
+            appendSection(to: menu) { self.addFileManagementItems(to: menu, item: item, urlsToAct: urlsToAct) }
+            appendSection(to: menu) { self.addTrashItem(to: menu, urlsToAct: urlsToAct) }
+            appendSection(to: menu) { self.addRemoveFromMonarchItem(to: menu) }
+        case .frequent:
+            appendSection(to: menu) { self.addOpenItems(to: menu, item: item, urlsToAct: urlsToAct) }
+            appendSection(to: menu) { self.addCopyAndShareItems(to: menu, item: item, urlsToAct: urlsToAct) }
+            appendSection(to: menu) { self.addMonarchItems(to: menu, item: item, urlsToAct: urlsToAct, includePin: false) }
+            appendSection(to: menu) { self.addFileManagementItems(to: menu, item: item, urlsToAct: urlsToAct) }
+            appendSection(to: menu) { self.addTrashItem(to: menu, urlsToAct: urlsToAct) }
+        case .standard:
+            appendSection(to: menu) { self.addOpenItems(to: menu, item: item, urlsToAct: urlsToAct) }
+            appendSection(to: menu) { self.addCopyAndShareItems(to: menu, item: item, urlsToAct: urlsToAct) }
+            appendSection(to: menu) { self.addMonarchItems(to: menu, item: item, urlsToAct: urlsToAct, includePin: true) }
+            appendSection(to: menu) { self.addFileManagementItems(to: menu, item: item, urlsToAct: urlsToAct) }
+            appendSection(to: menu) { self.addTrashItem(to: menu, urlsToAct: urlsToAct) }
+        }
+        return menu
+    }
 
-        // Open
+    private func contextMenuKind(for item: FileItem, urlsToAct: [URL]) -> ContextMenuKind {
+        if urlsToAct.count > 1 { return .multiSelection }
+        switch item.role {
+        case .rootShortcut: return .rootShortcut
+        case .frequent: return .frequent
+        case .standard: return .standard
+        }
+    }
+
+    private func appendSection(to menu: NSMenu, builder: () -> Void) {
+        let insertionIndex = menu.items.count
+        builder()
+        guard menu.items.count > insertionIndex else { return }
+        if insertionIndex > 0 {
+            menu.insertItem(.separator(), at: insertionIndex)
+        }
+    }
+
+    private func addOpenItems(to menu: NSMenu,
+                              item: FileItem,
+                              urlsToAct: [URL],
+                              includeQuickLook: Bool = true,
+                              includeFinderAndAppActions: Bool = true) {
         let openTitle = urlsToAct.count > 1 ? "Open \(urlsToAct.count) Items" : "Open"
         menu.addItem(withTitle: openTitle, action: #selector(openFiles), keyEquivalent: "").target = self
 
-        // Quick Look — single file only.
-        if urlsToAct.count == 1, !item.isDirectory {
+        if includeQuickLook, urlsToAct.count == 1, !item.isDirectory {
             menu.addItem(withTitle: "Quick Look", action: #selector(showQuickLook), keyEquivalent: " ").target = self
         }
 
-        // Show in Finder / Open With / Open in Terminal
-        if urlsToAct.count == 1 {
-            menu.addItem(withTitle: "Show in Finder", action: #selector(showInFinder), keyEquivalent: "").target = self
-            if !item.isDirectory, let openWithMenu = buildOpenWithMenu(for: item.url) {
-                let owItem = NSMenuItem(title: "Open With", action: nil, keyEquivalent: "")
-                owItem.submenu = openWithMenu
-                menu.addItem(owItem)
-            }
-            if item.isDirectory {
-                let terminalName = TerminalApp.resolved().rawValue
-                menu.addItem(withTitle: "Open in \(terminalName)", action: #selector(openInTerminal), keyEquivalent: "").target = self
-            }
+        guard includeFinderAndAppActions, urlsToAct.count == 1 else { return }
+        menu.addItem(withTitle: "Show in Finder", action: #selector(showInFinder), keyEquivalent: "").target = self
+        if !item.isDirectory, let openWithMenu = buildOpenWithMenu(for: item.url) {
+            let owItem = NSMenuItem(title: "Open With", action: nil, keyEquivalent: "")
+            owItem.submenu = openWithMenu
+            menu.addItem(owItem)
         }
-
-        menu.addItem(.separator())
-
-        // Share
-        if !urlsToAct.isEmpty {
-            menu.addItem(NSSharingServicePicker(items: urlsToAct).standardShareMenuItem)
-            menu.addItem(.separator())
+        if item.isDirectory {
+            let terminalName = TerminalApp.resolved().rawValue
+            menu.addItem(withTitle: "Open in \(terminalName)", action: #selector(openInTerminal), keyEquivalent: "").target = self
         }
+    }
 
-        // Copy
+    private func addCopyAndShareItems(to menu: NSMenu, item: FileItem, urlsToAct: [URL]) {
         let copyTitle = urlsToAct.count > 1 ? "Copy \(urlsToAct.count) Items" : "Copy"
         menu.addItem(withTitle: copyTitle, action: #selector(copyFiles), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Copy Path", action: #selector(copyPath), keyEquivalent: "").target = self
@@ -263,51 +316,58 @@ extension DraggableNSView /* Context Menu */ {
         if urlsToAct.count == 1, let dims = item.imageDimensions {
             menu.addItem(withTitle: "Copy Dimensions (\(dims))", action: #selector(copyDimensions), keyEquivalent: "").target = self
         }
+        if !urlsToAct.isEmpty {
+            menu.addItem(NSSharingServicePicker(items: urlsToAct).standardShareMenuItem)
+        }
+    }
 
-        // Pin / Unpin
-        if urlsToAct.count == 1, let folder = parentFolder {
+    private func addMonarchItems(to menu: NSMenu, item: FileItem, urlsToAct: [URL], includePin: Bool) {
+        if includePin, urlsToAct.count == 1, let folder = parentFolder {
             let pinned = PinStore.shared.isPinned(item.url, in: folder)
             menu.addItem(withTitle: pinned ? "Unpin" : "Pin to Top",
                          action: #selector(togglePin),
                          keyEquivalent: "").target = self
         }
-
-        // Add to Monarch
         if addToRootHandler != nil, urlsToAct.count == 1 {
             menu.addItem(withTitle: "Add to Monarch", action: #selector(addToRoot), keyEquivalent: "").target = self
         }
+        if hideFromFrequentHandler != nil, urlsToAct.count == 1 {
+            menu.addItem(withTitle: "Hide from Frequent", action: #selector(hideFromFrequent), keyEquivalent: "").target = self
+        }
+    }
 
-        // New Folder
-        var addedFolderSep = false
+    private func addFileManagementItems(to menu: NSMenu, item: FileItem, urlsToAct: [URL]) {
+        guard urlsToAct.count == 1 || parentFolder != nil else { return }
         if urlsToAct.count == 1, item.isDirectory {
-            menu.addItem(.separator()); addedFolderSep = true
             menu.addItem(withTitle: "New Folder Inside", action: #selector(newFolderInsideAction), keyEquivalent: "").target = self
         }
         if parentFolder != nil {
-            if !addedFolderSep { menu.addItem(.separator()) }
             menu.addItem(withTitle: "New Folder Here", action: #selector(newFolderHereAction), keyEquivalent: "").target = self
         }
-
-        // Rename
         if urlsToAct.count == 1 {
-            menu.addItem(.separator())
             menu.addItem(withTitle: "Rename…", action: #selector(renameAction), keyEquivalent: "").target = self
         }
+    }
 
-        // Trash
-        menu.addItem(.separator())
+    private func addDisplayNameItems(to menu: NSMenu, item: FileItem, urlsToAct: [URL]) {
+        guard urlsToAct.count == 1, updateRootDisplayNameHandler != nil else { return }
+        let title = item.displayNameOverride == nil ? "Set Display Name…" : "Edit Display Name…"
+        menu.addItem(withTitle: title, action: #selector(editDisplayNameAction), keyEquivalent: "").target = self
+        if item.displayNameOverride != nil {
+            menu.addItem(withTitle: "Clear Display Name", action: #selector(clearDisplayNameAction), keyEquivalent: "").target = self
+        }
+    }
+
+    private func addTrashItem(to menu: NSMenu, urlsToAct: [URL]) {
         let trashTitle = urlsToAct.count > 1 ? "Move \(urlsToAct.count) Items to Trash" : "Move to Trash"
         let trashItem = menu.addItem(withTitle: trashTitle, action: #selector(moveToTrash), keyEquivalent: "\u{8}")
         trashItem.keyEquivalentModifierMask = [.command]
         trashItem.target = self
+    }
 
-        // Remove from Monarch
-        if removeFromRootHandler != nil {
-            menu.addItem(.separator())
-            menu.addItem(withTitle: "Remove from Monarch", action: #selector(removeFromRoot), keyEquivalent: "").target = self
-        }
-
-        NSMenu.popUpContextMenu(menu, with: event, for: self)
+    private func addRemoveFromMonarchItem(to menu: NSMenu) {
+        guard removeFromRootHandler != nil else { return }
+        menu.addItem(withTitle: "Remove from Monarch", action: #selector(removeFromRoot), keyEquivalent: "").target = self
     }
 
     private func buildOpenWithMenu(for url: URL) -> NSMenu? {
@@ -364,18 +424,22 @@ extension DraggableNSView /* Actions */ {
 
     @objc private func openWithApp(_ sender: NSMenuItem) {
         guard let pair = sender.representedObject as? [URL], pair.count == 2 else { return }
+        FrequentStore.shared.recordAccess(pair[0])
         NSWorkspace.shared.open([pair[0]], withApplicationAt: pair[1],
                                 configuration: NSWorkspace.OpenConfiguration())
     }
 
     @objc private func openFiles() {
         let urls: [URL] = {
-            if let sel = selectionState, sel.isSelected(fileItem?.url ?? URL(fileURLWithPath: "")), sel.selectedURLs.count > 1 {
+        if let sel = selectionState, sel.isSelected(fileItem?.url ?? URL(fileURLWithPath: "")), sel.selectedURLs.count > 1 {
                 return Array(sel.selectedURLs)
             }
             return [fileItem?.url].compactMap { $0 }
         }()
-        for url in urls { NSWorkspace.shared.open(url) }
+        for url in urls {
+            FrequentStore.shared.recordAccess(url)
+            NSWorkspace.shared.open(url)
+        }
     }
 
     @objc private func showQuickLook() {
@@ -385,11 +449,13 @@ extension DraggableNSView /* Actions */ {
 
     @objc private func showInFinder() {
         guard let url = fileItem?.url else { return }
+        FrequentStore.shared.recordAccess(url)
         NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
     @objc private func openInTerminal() {
         guard let url = fileItem?.url, fileItem?.isDirectory == true else { return }
+        FrequentStore.shared.recordAccess(url)
         TerminalApp.resolved().open(folder: url)
     }
 
@@ -429,8 +495,36 @@ extension DraggableNSView /* Actions */ {
         addToRootHandler?(url)
     }
 
+    @objc private func hideFromFrequent() {
+        hideFromFrequentHandler?()
+    }
+
     @objc private func removeFromRoot() {
         removeFromRootHandler?()
+    }
+
+    @objc private func editDisplayNameAction() {
+        guard let item = fileItem else { return }
+        let alert = NSAlert()
+        alert.messageText = "Display Name"
+        alert.informativeText = "Shown only in Monarch. Leave it blank to use the real file or folder name."
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+
+        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 22))
+        input.placeholderString = item.name
+        input.stringValue = item.displayNameOverride ?? ""
+        alert.accessoryView = input
+        alert.window.initialFirstResponder = input
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let alias = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        updateRootDisplayNameHandler?(item.url, alias.isEmpty ? nil : alias)
+    }
+
+    @objc private func clearDisplayNameAction() {
+        guard let url = fileItem?.url else { return }
+        updateRootDisplayNameHandler?(url, nil)
     }
 
     @objc private func moveToTrash() {
@@ -522,7 +616,9 @@ struct DraggableFileRow: NSViewRepresentable {
     var parentFolder: URL? = nil
     var onSpringLoad: (() -> Void)? = nil
     var removeFromRootHandler: (() -> Void)? = nil
+    var updateRootDisplayNameHandler: ((URL, String?) -> Void)? = nil
     var addToRootHandler: ((URL) -> Void)? = nil
+    var hideFromFrequentHandler: (() -> Void)? = nil
 
     func makeNSView(context: Context) -> DraggableNSView {
         let view = DraggableNSView()
@@ -532,7 +628,9 @@ struct DraggableFileRow: NSViewRepresentable {
         view.parentFolder = parentFolder
         view.onSpringLoad = onSpringLoad
         view.removeFromRootHandler = removeFromRootHandler
+        view.updateRootDisplayNameHandler = updateRootDisplayNameHandler
         view.addToRootHandler = addToRootHandler
+        view.hideFromFrequentHandler = hideFromFrequentHandler
 
         let hosting = NSHostingView(rootView: makeContent())
         hosting.translatesAutoresizingMaskIntoConstraints = false
@@ -553,7 +651,9 @@ struct DraggableFileRow: NSViewRepresentable {
         nsView.parentFolder = parentFolder
         nsView.onSpringLoad = onSpringLoad
         nsView.removeFromRootHandler = removeFromRootHandler
+        nsView.updateRootDisplayNameHandler = updateRootDisplayNameHandler
         nsView.addToRootHandler = addToRootHandler
+        nsView.hideFromFrequentHandler = hideFromFrequentHandler
         if let hosting = nsView.subviews.first as? NSHostingView<FileRowContent> {
             hosting.rootView = makeContent()
         }

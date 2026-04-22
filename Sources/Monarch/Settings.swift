@@ -10,6 +10,8 @@ enum UDKey {
     static let appearanceMode       = "appearanceMode"
     static let rowDensity           = "rowDensity"
     static let showFooterBar        = "showFooterBar"
+    static let showFrequentSection  = "showFrequentSection"
+    static let frequentDisplayLimit = "frequentDisplayLimit"
     static let sortOrder            = "sortOrder"
     static let sortDescending       = "sortDescending"
     static let showHiddenFiles      = "showHiddenFiles"
@@ -18,11 +20,32 @@ enum UDKey {
     static let preferredTerminal    = "preferredTerminal"
     static let perFolderSortOrder   = "perFolderSortOrder"
     static let perFolderDescending  = "perFolderDescending"
+    static let rootShortcutAliases  = "rootShortcutAliases"
+    static let frequentItems        = "frequentItems"
+    static let hiddenFrequentItems  = "hiddenFrequentItems"
+}
+
+enum FrequentSectionConfig {
+    static let defaultDisplayLimit = 3
+    static let displayLimitRange = 1...10
 }
 
 // MARK: - Per-folder sort helpers
 
 extension UserDefaults {
+    @objc dynamic var showFrequentSection: Bool {
+        object(forKey: UDKey.showFrequentSection) as? Bool ?? true
+    }
+
+    @objc dynamic var frequentDisplayLimit: Int {
+        let raw = object(forKey: UDKey.frequentDisplayLimit) as? Int
+            ?? FrequentSectionConfig.defaultDisplayLimit
+        return min(
+            max(raw, FrequentSectionConfig.displayLimitRange.lowerBound),
+            FrequentSectionConfig.displayLimitRange.upperBound
+        )
+    }
+
     /// Sort order for a specific folder, falling back to the global setting.
     func sortOrder(for url: URL) -> FileSortOrder {
         let dict = dictionary(forKey: UDKey.perFolderSortOrder) as? [String: String] ?? [:]
@@ -168,6 +191,14 @@ final class Settings {
             try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
         }
         UserDefaults.standard.set(bookmarks, forKey: key)
+    }
+
+    func loadShortcutAliases() -> [String: String] {
+        UserDefaults.standard.dictionary(forKey: UDKey.rootShortcutAliases) as? [String: String] ?? [:]
+    }
+
+    func saveShortcutAliases(_ aliases: [String: String]) {
+        UserDefaults.standard.set(aliases, forKey: UDKey.rootShortcutAliases)
     }
 
     func addFolder(_ url: URL) {

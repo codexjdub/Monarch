@@ -15,6 +15,8 @@ iconutil -c icns Resources/AppIcon.iconset -o Resources/AppIcon.icns
 
 The `apply_w4.swift` script reads from this folder, applies the W4 treatment (off-white gradient tile + 1.25× artwork), and writes scaled PNGs into `Resources/AppIcon.iconset/`. The `iconutil` step compiles those PNGs into the `.icns` file the app actually loads.
 
+After regenerating icon assets, run `bash build.sh` from the repo root to rebuild, re-sign, kill any running Monarch instance, and relaunch the app with the updated icon.
+
 ### `StatusIcon.png`
 Original 144×144 8-bit gray+alpha silhouette of the folder + butterfly wing for the menu bar. Identical to `Resources/StatusIcon.png` (the production copy). Kept here as the immutable source so future tweaks (padding, alternate weights, etc.) can derive from a known-good origin.
 

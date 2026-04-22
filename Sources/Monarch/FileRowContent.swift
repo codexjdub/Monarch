@@ -32,7 +32,7 @@ struct FileRowContent: View {
                 .opacity(item.exists ? 1.0 : 0.45)
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(item.name)
+                Text(item.displayName)
                     .font(.system(size: density.fontSize))
                     .strikethrough(!item.exists, color: .secondary)
                     .foregroundStyle(item.exists ? .primary : .secondary)
@@ -67,6 +67,12 @@ struct FileRowContent: View {
             Text("Missing — click to locate")
                 .font(.system(size: density.subtitleFontSize))
                 .foregroundStyle(.secondary)
+        } else if let subtitle = item.subtitleOverride {
+            Text(subtitle)
+                .font(.system(size: density.subtitleFontSize))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
         } else {
             let parts: [String?] = item.imageDimensions != nil
                 ? [item.fileSize, item.imageDimensions]

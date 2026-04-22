@@ -326,7 +326,7 @@ class StatusItemController: NSObject {
 
         if let shortcut = model.focusedRootShortcut {
             menu.addItem(
-                withTitle: "Remove \"\(shortcut.lastPathComponent)\"",
+                withTitle: "Remove \"\(shortcut.displayName)\"",
                 action: #selector(removeCurrentShortcut),
                 keyEquivalent: ""
             ).target = self
@@ -388,7 +388,7 @@ class StatusItemController: NSObject {
 
     @objc private func removeCurrentShortcut() {
         if let shortcut = model.focusedRootShortcut {
-            store.remove(shortcut)
+            store.remove(shortcut.url)
         }
     }
 
