@@ -6,6 +6,8 @@
 
 A native macOS menu bar app for cascading folder navigation. Click the menu bar icon to see your configured shortcuts (folders or files). Hover any folder to peek inside — another peek opens beside it. Keep hovering to drill deeper. Click a file to open it; click a folder to reveal it in Finder.
 
+Peek placement adapts near screen edges, so the cascade can flip or clamp intelligently instead of blindly extending to the right.
+
 Root shortcuts can also have a custom display name inside Monarch without renaming the file or folder on disk. When a display name is set, Monarch shows the shortcut's path as the subtitle.
 
 Monarch also keeps a level-0 **Frequent** section for the files and folders you actually open through Monarch. It defaults to 3 items, but you can change that in Preferences. Items must be opened at least twice before they appear, older usage decays over time, and anything already configured as a root shortcut is excluded so the same path never appears twice. You can also hide an individual item from Frequent from its context menu.

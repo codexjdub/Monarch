@@ -18,31 +18,70 @@ final class PeekNSWindow: NSWindow {
 
 @MainActor
 final class PeekWindowManager {
+    private struct WindowEntry {
+        let window: PeekNSWindow
+        let hostingController: NSHostingController<AnyView>
+    }
+
+    private enum HorizontalDirection {
+        case left
+        case right
+    }
+
+    enum WidthPolicy {
+        case fixed
+        case flexible(minWidth: CGFloat)
+    }
+
+    private struct PlacementCandidate {
+        let direction: HorizontalDirection
+        let frame: NSRect
+        let clampDistance: CGFloat
+        let overlapArea: CGFloat
+        let gapShortfall: CGFloat
+        let widthCompression: CGFloat
+    }
 
     let defaultSize = NSSize(width: 320, height: 440)
+    let minimumFolderWidth: CGFloat = 240
+    private let preferredGap: CGFloat = 6
+    private let minimumGap: CGFloat = 2
+    private let edgePadding: CGFloat = 8
+    private let sideSwitchHysteresis: CGFloat = 18
     private let peekAnimationDuration: TimeInterval = 0.20
-    private var windows: [Int: PeekNSWindow] = [:]
+    private var windows: [Int: WindowEntry] = [:]
+    private var directions: [Int: HorizontalDirection] = [:]
 
     // MARK: Window lifecycle
 
-    func present(atLevel level: Int, anchor: NSRect, size: NSSize, content: AnyView) {
-        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(anchor.origin) })
-                        ?? NSScreen.main
-                        ?? NSScreen.screens.first else { return }
+    func present(atLevel level: Int,
+                 anchor: NSRect,
+                 size: NSSize,
+                 widthPolicy: WidthPolicy = .fixed,
+                 content: AnyView) {
+        guard let screen = screen(for: anchor) else { return }
 
-        var origin = NSPoint(x: anchor.maxX + 2, y: anchor.maxY - size.height)
-        if origin.x + size.width > screen.visibleFrame.maxX {
-            origin.x = anchor.minX - size.width - 2
-        }
-        if origin.y < screen.visibleFrame.minY + 8 {
-            origin.y = screen.visibleFrame.minY + 8
-        }
-        if origin.y + size.height > screen.visibleFrame.maxY {
-            origin.y = screen.visibleFrame.maxY - size.height
+        let fittedSize = fittedSize(for: size, on: screen)
+        let placement = bestPlacement(atLevel: level,
+                                      anchor: anchor,
+                                      size: fittedSize,
+                                      widthPolicy: widthPolicy,
+                                      on: screen)
+        let finalFrame = placement.frame
+        let appearance = AppearanceMode(
+            rawValue: UserDefaults.standard.string(forKey: UDKey.appearanceMode) ?? ""
+        )?.nsAppearance
+
+        if let existing = windows[level] {
+            existing.hostingController.rootView = content
+            existing.window.appearance = appearance
+            animateReplacement(of: existing.window, to: finalFrame)
+            directions[level] = placement.direction
+            return
         }
 
         let win = PeekNSWindow(
-            contentRect: NSRect(origin: origin, size: size),
+            contentRect: finalFrame,
             styleMask: [.borderless],
             backing: .buffered, defer: false
         )
@@ -52,9 +91,7 @@ final class PeekWindowManager {
         win.level = .popUpMenu
         win.isReleasedWhenClosed = false
         win.collectionBehavior = [.transient, .ignoresCycle]
-        win.appearance = AppearanceMode(
-            rawValue: UserDefaults.standard.string(forKey: UDKey.appearanceMode) ?? ""
-        )?.nsAppearance
+        win.appearance = appearance
 
         let visualEffect = NSVisualEffectView()
         visualEffect.material = .sidebar
@@ -80,29 +117,189 @@ final class PeekWindowManager {
         win.contentView = visualEffect
 
         // Animate in: slide up 6pt + fade from 0 → 1 over 120ms.
-        let finalFrame = NSRect(origin: origin, size: size)
-        let startFrame = NSRect(x: origin.x, y: origin.y - 6,
-                                width: size.width, height: size.height)
-        win.setFrame(startFrame, display: false)
-        win.alphaValue = 0
-        win.orderFront(nil)
-        NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = peekAnimationDuration
-            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            win.animator().alphaValue = 1
-            win.animator().setFrame(finalFrame, display: true)
-        }
-        windows[level] = win
+        let startFrame = NSRect(x: finalFrame.origin.x,
+                                y: finalFrame.origin.y - 6,
+                                width: finalFrame.size.width,
+                                height: finalFrame.size.height)
+        animateInitialPresentation(of: win, from: startFrame, to: finalFrame)
+        windows[level] = WindowEntry(window: win, hostingController: hc)
+        directions[level] = placement.direction
     }
 
     func close(level: Int) {
-        windows[level]?.close()
+        windows[level]?.window.close()
         windows[level] = nil
+        directions[level] = nil
+    }
+
+    func hasWindow(atLevel level: Int) -> Bool {
+        windows[level] != nil
     }
 
     /// All level keys strictly above `minLevel`, unsorted.
     func levels(greaterThan minLevel: Int) -> [Int] {
         windows.keys.filter { $0 > minLevel }
+    }
+
+    private func screen(for anchor: NSRect) -> NSScreen? {
+        let anchorCenter = NSPoint(x: anchor.midX, y: anchor.midY)
+        return NSScreen.screens.first(where: { $0.frame.contains(anchorCenter) })
+            ?? NSScreen.screens.first(where: { $0.frame.contains(anchor.origin) })
+            ?? NSScreen.main
+            ?? NSScreen.screens.first
+    }
+
+    private func fittedSize(for proposedSize: NSSize, on screen: NSScreen) -> NSSize {
+        let visible = screen.visibleFrame.insetBy(dx: edgePadding, dy: edgePadding)
+        return NSSize(
+            width: min(proposedSize.width, visible.width),
+            height: min(proposedSize.height, visible.height)
+        )
+    }
+
+    private func bestPlacement(atLevel level: Int,
+                               anchor: NSRect,
+                               size: NSSize,
+                               widthPolicy: WidthPolicy,
+                               on screen: NSScreen) -> PlacementCandidate {
+        let preferredDirection = directions[level] ?? directions[level - 1]
+        let leftCandidate = candidate(for: .left,
+                                      atLevel: level,
+                                      anchor: anchor,
+                                      size: size,
+                                      widthPolicy: widthPolicy,
+                                      on: screen)
+        let rightCandidate = candidate(for: .right,
+                                       atLevel: level,
+                                       anchor: anchor,
+                                       size: size,
+                                       widthPolicy: widthPolicy,
+                                       on: screen)
+
+        if let preferredDirection {
+            let preferredCandidate = preferredDirection == .left ? leftCandidate : rightCandidate
+            let alternateCandidate = preferredDirection == .left ? rightCandidate : leftCandidate
+            let preferredScore = score(preferredCandidate)
+            let alternateScore = score(alternateCandidate)
+            if alternateScore + sideSwitchHysteresis < preferredScore {
+                return alternateCandidate
+            }
+            return preferredCandidate
+        }
+
+        let leftScore = score(leftCandidate)
+        let rightScore = score(rightCandidate)
+        if leftScore == rightScore {
+            return rightCandidate
+        }
+        return leftScore < rightScore ? leftCandidate : rightCandidate
+    }
+
+    private func candidate(for direction: HorizontalDirection,
+                           atLevel level: Int,
+                           anchor: NSRect,
+                           size: NSSize,
+                           widthPolicy: WidthPolicy,
+                           on screen: NSScreen) -> PlacementCandidate {
+        let visible = screen.visibleFrame.insetBy(dx: edgePadding, dy: edgePadding)
+        let totalAvailable: CGFloat
+        let shortfall: CGFloat
+        let gap: CGFloat
+
+        switch direction {
+        case .right:
+            totalAvailable = visible.maxX - anchor.maxX
+        case .left:
+            totalAvailable = anchor.minX - visible.minX
+        }
+
+        shortfall = max(0, preferredGap - totalAvailable)
+        gap = max(minimumGap, preferredGap - shortfall)
+        let width = width(for: size.width,
+                          totalAvailable: totalAvailable,
+                          gap: gap,
+                          policy: widthPolicy,
+                          visibleWidth: visible.width)
+        let minX = visible.minX
+        let maxX = max(minX, visible.maxX - width)
+        let idealX: CGFloat
+        switch direction {
+        case .right:
+            idealX = anchor.maxX + gap
+        case .left:
+            idealX = anchor.minX - width - gap
+        }
+
+        let originX = min(max(idealX, minX), maxX)
+        let maxY = max(visible.minY, visible.maxY - size.height)
+        let originY = min(max(anchor.maxY - size.height, visible.minY), maxY)
+        let frame = NSRect(x: originX, y: originY, width: width, height: size.height)
+        return PlacementCandidate(
+            direction: direction,
+            frame: frame,
+            clampDistance: abs(originX - idealX),
+            overlapArea: overlappingArea(for: frame, excluding: level),
+            gapShortfall: shortfall,
+            widthCompression: max(0, size.width - width)
+        )
+    }
+
+    private func width(for proposedWidth: CGFloat,
+                       totalAvailable: CGFloat,
+                       gap: CGFloat,
+                       policy: WidthPolicy,
+                       visibleWidth: CGFloat) -> CGFloat {
+        switch policy {
+        case .fixed:
+            return min(proposedWidth, visibleWidth)
+        case .flexible(let minWidth):
+            let boundedMinimum = min(minWidth, visibleWidth)
+            let usableWidth = max(0, totalAvailable - gap)
+            let targetWidth = min(proposedWidth, max(boundedMinimum, usableWidth))
+            return min(targetWidth, visibleWidth)
+        }
+    }
+
+    private func score(_ candidate: PlacementCandidate) -> CGFloat {
+        var total = candidate.clampDistance * 3
+        total += candidate.gapShortfall * 8
+        total += candidate.overlapArea / 80
+        total += candidate.widthCompression * 0.25
+        return total
+    }
+
+    private func overlappingArea(for frame: NSRect, excluding level: Int) -> CGFloat {
+        windows
+            .filter { $0.key != level }
+            .reduce(0) { partial, element in
+                let intersection = frame.intersection(element.value.window.frame)
+                guard !intersection.isNull else { return partial }
+                return partial + (intersection.width * intersection.height)
+            }
+    }
+
+    private func animateInitialPresentation(of window: PeekNSWindow, from startFrame: NSRect, to finalFrame: NSRect) {
+        window.setFrame(startFrame, display: false)
+        window.alphaValue = 0
+        window.orderFront(nil)
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = peekAnimationDuration
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            window.animator().alphaValue = 1
+            window.animator().setFrame(finalFrame, display: true)
+        }
+    }
+
+    private func animateReplacement(of window: PeekNSWindow, to finalFrame: NSRect) {
+        window.orderFront(nil)
+        if window.frame.equalTo(finalFrame) {
+            return
+        }
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = peekAnimationDuration * 0.9
+            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            window.animator().setFrame(finalFrame, display: true)
+        }
     }
 
     // MARK: Preview sizing

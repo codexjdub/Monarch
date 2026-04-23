@@ -8,8 +8,8 @@ import Combine
 //
 // A cascade is a horizontal chain of lists:
 //   level 0 = the main popover, showing configured folder roots
-//   level 1 = first peek window (to the right of level 0)
-//   level 2 = peek to the right of level 1
+//   level 1 = first peek window beside level 0
+//   level 2 = next peek window in the chain
 //   ...
 //
 // Exactly one `(level, index)` pair is "focused" across the whole cascade.
@@ -614,14 +614,19 @@ final class CascadeModel: ObservableObject {
     // MARK: - Peek open / close
 
     private func openFolderPeek(atLevel level: Int, folder: URL, parentIndex: Int) {
-        closePeeks(atLevelsGreaterThan: level - 1)
+        closePeeks(atLevelsGreaterThan: level)
         // Install a placeholder level with empty contents; present the peek
-        // immediately so hover feels instant. The async load fills it in.
+        // immediately so hover feels instant. If this level already exists,
+        // PeekWindowManager reuses that window and animates it into place.
         let placeholder = Level(source: folder, content: .folder(items: [], sections: [], rowFrames: [:]), isLoading: true)
         guard installLevel(placeholder, atLevel: level, parentIndex: parentIndex) else { return }
         installWatcher(forLevel: level, url: folder)
         let content = AnyView(LevelListView(level: level, model: self))
-        presentPeek(atLevel: level, parentIndex: parentIndex, size: peekManager.defaultSize, content: content)
+        presentPeek(atLevel: level,
+                    parentIndex: parentIndex,
+                    size: peekManager.defaultSize,
+                    widthPolicy: .flexible(minWidth: peekManager.minimumFolderWidth),
+                    content: content)
 
         let token = beginLoad(atLevel: level)
         Task { [weak self] in
@@ -640,11 +645,15 @@ final class CascadeModel: ObservableObject {
     }
 
     private func openPreviewPeek(atLevel level: Int, url: URL, kind: PreviewKind, parentIndex: Int) {
-        closePeeks(atLevelsGreaterThan: level - 1)
+        closePeeks(atLevelsGreaterThan: level)
+        removeWatchers(forLevel: level)
         let state = Level(source: url, content: .preview(kind: kind, url: url))
         guard installLevel(state, atLevel: level, parentIndex: parentIndex) else { return }
         let content = AnyView(PreviewLevelView(level: level, url: url, kind: kind, model: self))
-        presentPeek(atLevel: level, parentIndex: parentIndex, size: PeekWindowManager.previewSize(for: url, kind: kind), content: content)
+        presentPeek(atLevel: level,
+                    parentIndex: parentIndex,
+                    size: PeekWindowManager.previewSize(for: url, kind: kind),
+                    content: content)
     }
 
     /// Inserts or replaces `state` at `level`, trims any deeper levels, and
@@ -666,9 +675,17 @@ final class CascadeModel: ObservableObject {
         return true
     }
 
-    private func presentPeek(atLevel level: Int, parentIndex: Int, size: NSSize, content: AnyView) {
+    private func presentPeek(atLevel level: Int,
+                             parentIndex: Int,
+                             size: NSSize,
+                             widthPolicy: PeekWindowManager.WidthPolicy = .fixed,
+                             content: AnyView) {
         let anchor = levels[level - 1].rowFrames[parentIndex] ?? .zero
-        peekManager.present(atLevel: level, anchor: anchor, size: size, content: content)
+        peekManager.present(atLevel: level,
+                            anchor: anchor,
+                            size: size,
+                            widthPolicy: widthPolicy,
+                            content: content)
     }
 
     private func scheduleClose(deeperThan level: Int) {

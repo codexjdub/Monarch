@@ -4,11 +4,15 @@ import SwiftUI
 
 @MainActor
 class StatusItemController: NSObject {
+    private static let hoverOpenDelay: TimeInterval = 0.28
+
     private let store: ShortcutStore
     private var statusItem: NSStatusItem
     private var popover = NSPopover()
     private var sizeAtResizeStart: NSSize = .zero
     private let model: CascadeModel
+    private var hoverOpenTask: DispatchWorkItem?
+    private var popoverRefreshTask: Task<Void, Never>?
     private var keyMonitor: Any?
     private var dragBeginMonitor: Any?
     private var dragEndMonitor: Any?
@@ -92,6 +96,9 @@ class StatusItemController: NSObject {
         overlay.onHighlight = { [weak self] on in
             self?.statusItem.button?.highlight(on)
         }
+        overlay.onHoverChange = { [weak self] inside in
+            self?.handleStatusItemHover(inside)
+        }
     }
 
     /// Loads `Resources/StatusIcon.png` from the bundle as a template image.
@@ -147,6 +154,7 @@ class StatusItemController: NSObject {
     }
 
     @objc private func handleClick() {
+        cancelHoverOpen()
         guard let event = NSApp.currentEvent else { return }
         if event.type == .rightMouseUp {
             showQuitMenu()
@@ -157,14 +165,58 @@ class StatusItemController: NSObject {
 
     func openPopover() {
         guard let button = statusItem.button else { return }
+        cancelHoverOpen()
         applyAppearance()
         popover.contentSize = savedPopoverSize
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         popover.contentViewController?.view.window?.makeKey()
         NSApp.activate(ignoringOtherApps: true)
-        model.reloadAll()
         installKeyMonitor()
         installDragMonitor()
+        schedulePopoverRefresh()
+    }
+
+    private func schedulePopoverRefresh() {
+        popoverRefreshTask?.cancel()
+        popoverRefreshTask = Task { @MainActor [weak self] in
+            defer { self?.popoverRefreshTask = nil }
+            await Task.yield()
+            guard !Task.isCancelled,
+                  let self,
+                  self.popover.isShown else { return }
+            self.model.reloadAll()
+        }
+    }
+
+    private func handleStatusItemHover(_ inside: Bool) {
+        guard UserDefaults.standard.bool(forKey: UDKey.openPopoverOnHover) else {
+            cancelHoverOpen()
+            return
+        }
+        if inside {
+            scheduleHoverOpen()
+        } else {
+            cancelHoverOpen()
+        }
+    }
+
+    private func scheduleHoverOpen() {
+        guard !popover.isShown, !model.externalDragActive else { return }
+        cancelHoverOpen()
+        let task = DispatchWorkItem { [weak self] in
+            guard let self,
+                  UserDefaults.standard.bool(forKey: UDKey.openPopoverOnHover),
+                  !self.popover.isShown,
+                  !self.model.externalDragActive else { return }
+            self.openPopover()
+        }
+        hoverOpenTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.hoverOpenDelay, execute: task)
+    }
+
+    private func cancelHoverOpen() {
+        hoverOpenTask?.cancel()
+        hoverOpenTask = nil
     }
 
     private func applyAppearance() {
@@ -439,6 +491,9 @@ extension StatusItemController: NSPopoverDelegate {
     }
 
     func popoverWillClose(_ notification: Notification) {
+        cancelHoverOpen()
+        popoverRefreshTask?.cancel()
+        popoverRefreshTask = nil
         removeKeyMonitor()
         removeDragMonitor()
         model.closeAll()
@@ -457,6 +512,8 @@ extension StatusItemController: NSPopoverDelegate {
 private class DropOverlayView: NSView {
     var onDrop: (([URL]) -> Void)?
     var onHighlight: ((Bool) -> Void)?
+    var onHoverChange: ((Bool) -> Void)?
+    private var trackingAreaRef: NSTrackingArea?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -471,11 +528,35 @@ private class DropOverlayView: NSView {
     // Transparent to clicks — lets the NSStatusBarButton handle them.
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
+    override func updateTrackingAreas() {
+        if let trackingAreaRef {
+            removeTrackingArea(trackingAreaRef)
+        }
+        let trackingArea = NSTrackingArea(
+            rect: .zero,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(trackingArea)
+        trackingAreaRef = trackingArea
+        super.updateTrackingAreas()
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        onHoverChange?(true)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        onHoverChange?(false)
+    }
+
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
         guard sender.draggingPasteboard.canReadObject(
             forClasses: [NSURL.self],
             options: [.urlReadingFileURLsOnly: true]
         ) else { return [] }
+        onHoverChange?(false)
         onHighlight?(true)
         return .copy
     }

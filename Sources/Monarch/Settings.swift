@@ -17,6 +17,8 @@ enum UDKey {
     static let showHiddenFiles      = "showHiddenFiles"
     static let popoverWidth         = "popoverWidth"
     static let popoverHeight        = "popoverHeight"
+    static let openPopoverOnHover   = "openPopoverOnHover"
+    static let preferencesShortcutsHeight = "preferencesShortcutsHeight"
     static let preferredTerminal    = "preferredTerminal"
     static let perFolderSortOrder   = "perFolderSortOrder"
     static let perFolderDescending  = "perFolderDescending"
