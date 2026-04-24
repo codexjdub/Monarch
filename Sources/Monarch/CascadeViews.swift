@@ -558,6 +558,7 @@ struct LevelListBody: View {
             selectionState: selectionState,
             isFocused: model.focus.level == level && model.focus.index == idx,
             isOnPath: model.pathIndices[level] == idx && level + 1 < model.levels.count,
+            onHover: { model.mouseHover(level: level, index: idx) },
             parentFolder: state.source,
             onSpringLoad: item.isDirectory
                 ? { model.springLoadFolder(level: level, index: idx) }

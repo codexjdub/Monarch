@@ -4,7 +4,8 @@ import CoreServices
 
 // MARK: - NSView handling drag + click + context menu
 //
-// No hover tracking here. The window-level WindowMouseTracker owns hover.
+// Row hover is handled here directly. The window-level WindowMouseTracker is
+// still responsible for window enter/exit and cascade close timing.
 //
 // Stored properties live in the class body (Swift extensions can't add them).
 // Behavior is grouped into extensions below: Mouse & Drag Source, Drop Target,
@@ -16,6 +17,7 @@ class DraggableNSView: NSView, NSDraggingSource {
 
     var fileItem: FileItem?
     var onTap: (() -> Void)?
+    var onHover: (() -> Void)?
     var selectionState: SelectionState?
     var parentFolder: URL?
     var removeFromRootHandler: (() -> Void)?
@@ -29,6 +31,7 @@ class DraggableNSView: NSView, NSDraggingSource {
 
     fileprivate var mouseDownEvent: NSEvent?
     fileprivate var dragStarted = false
+    fileprivate var hoverTrackingArea: NSTrackingArea?
 
     // MARK: Drop target state
 
@@ -53,6 +56,32 @@ class DraggableNSView: NSView, NSDraggingSource {
         super.init(coder: coder)
         wantsLayer = true
         registerForDraggedTypes([.fileURL])
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let area = hoverTrackingArea { removeTrackingArea(area) }
+        let area = NSTrackingArea(
+            rect: .zero,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        hoverTrackingArea = area
+        syncHoverIfInside()
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        onHover?()
+    }
+
+    private func syncHoverIfInside() {
+        guard let window, window.isVisible else { return }
+        let mouseInWin = window.mouseLocationOutsideOfEventStream
+        let localPoint = convert(mouseInWin, from: nil)
+        guard bounds.contains(localPoint) else { return }
+        onHover?()
     }
 }
 
@@ -613,6 +642,7 @@ struct DraggableFileRow: NSViewRepresentable {
     @ObservedObject var selectionState: SelectionState
     var isFocused: Bool = false
     var isOnPath: Bool = false
+    var onHover: (() -> Void)? = nil
     var parentFolder: URL? = nil
     var onSpringLoad: (() -> Void)? = nil
     var removeFromRootHandler: (() -> Void)? = nil
@@ -624,6 +654,7 @@ struct DraggableFileRow: NSViewRepresentable {
         let view = DraggableNSView()
         view.fileItem = item
         view.onTap = onTap
+        view.onHover = onHover
         view.selectionState = selectionState
         view.parentFolder = parentFolder
         view.onSpringLoad = onSpringLoad
@@ -647,6 +678,7 @@ struct DraggableFileRow: NSViewRepresentable {
     func updateNSView(_ nsView: DraggableNSView, context: Context) {
         nsView.fileItem = item
         nsView.onTap = onTap
+        nsView.onHover = onHover
         nsView.selectionState = selectionState
         nsView.parentFolder = parentFolder
         nsView.onSpringLoad = onSpringLoad

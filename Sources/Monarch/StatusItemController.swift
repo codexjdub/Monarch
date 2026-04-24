@@ -12,7 +12,7 @@ class StatusItemController: NSObject {
     private var sizeAtResizeStart: NSSize = .zero
     private let model: CascadeModel
     private var hoverOpenTask: DispatchWorkItem?
-    private var popoverRefreshTask: Task<Void, Never>?
+    private var popoverPostOpenTask: Task<Void, Never>?
     private var keyMonitor: Any?
     private var dragBeginMonitor: Any?
     private var dragEndMonitor: Any?
@@ -169,21 +169,23 @@ class StatusItemController: NSObject {
         applyAppearance()
         popover.contentSize = savedPopoverSize
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-        popover.contentViewController?.view.window?.makeKey()
-        NSApp.activate(ignoringOtherApps: true)
-        installKeyMonitor()
-        installDragMonitor()
-        schedulePopoverRefresh()
+        schedulePopoverPostOpenWork()
     }
 
-    private func schedulePopoverRefresh() {
-        popoverRefreshTask?.cancel()
-        popoverRefreshTask = Task { @MainActor [weak self] in
-            defer { self?.popoverRefreshTask = nil }
-            await Task.yield()
+    private func schedulePopoverPostOpenWork() {
+        popoverPostOpenTask?.cancel()
+        popoverPostOpenTask = Task { @MainActor [weak self] in
+            defer { self?.popoverPostOpenTask = nil }
+            try? await Task.sleep(nanoseconds: 40_000_000)
             guard !Task.isCancelled,
                   let self,
                   self.popover.isShown else { return }
+            self.popover.contentViewController?.view.window?.makeKey()
+            NSApp.activate(ignoringOtherApps: true)
+            self.installKeyMonitor()
+            self.installDragMonitor()
+            await Task.yield()
+            guard !Task.isCancelled, self.popover.isShown else { return }
             self.model.reloadAll()
         }
     }
@@ -492,8 +494,8 @@ extension StatusItemController: NSPopoverDelegate {
 
     func popoverWillClose(_ notification: Notification) {
         cancelHoverOpen()
-        popoverRefreshTask?.cancel()
-        popoverRefreshTask = nil
+        popoverPostOpenTask?.cancel()
+        popoverPostOpenTask = nil
         removeKeyMonitor()
         removeDragMonitor()
         model.closeAll()

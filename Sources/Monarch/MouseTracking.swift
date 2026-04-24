@@ -124,7 +124,6 @@ final class WindowMouseTrackerNSView: NSView {
     private var level: Int = 0
     private weak var model: CascadeModel?
     private var area: NSTrackingArea?
-    private var lastIndex: Int? = nil
 
     func configure(level: Int, model: CascadeModel) {
         self.level = level
@@ -150,32 +149,28 @@ final class WindowMouseTrackerNSView: NSView {
 
     override func mouseEntered(with event: NSEvent) {
         model?.mouseEnteredWindow(level: level)
-        syncIfInside()
+        syncWindowPresence(at: event.locationInWindow)
     }
-    override func mouseMoved(with event: NSEvent) { syncIfInside() }
+    override func mouseMoved(with event: NSEvent) { syncWindowPresence(at: event.locationInWindow) }
     override func mouseExited(with event: NSEvent) {
-        lastIndex = nil
         model?.mouseLeftWindow(level: level)
     }
 
-    /// If the cursor is currently inside our bounds, update the focused row.
-    /// No-op if outside (does NOT send leave events — those come from mouseExited).
+    /// If the cursor is currently inside our bounds, mark the window as active.
+    /// Row-level tracking handles the actual hovered row.
     private func syncIfInside() {
-        guard let window, window.isVisible, let model else { return }
-        let mouseInWin = window.mouseLocationOutsideOfEventStream
+        guard let window, window.isVisible else { return }
+        syncWindowPresence(at: window.mouseLocationOutsideOfEventStream, window: window)
+    }
+
+    private func syncWindowPresence(at mouseInWin: NSPoint) {
+        guard let window, window.isVisible else { return }
+        syncWindowPresence(at: mouseInWin, window: window)
+    }
+
+    private func syncWindowPresence(at mouseInWin: NSPoint, window: NSWindow) {
         let localPoint = convert(mouseInWin, from: nil)
         guard bounds.contains(localPoint) else { return }
-
-        model.mouseEnteredWindow(level: level)
-        let mouseScreen = window.convertPoint(toScreen: mouseInWin)
-        let idx = model.hitTestRow(level: level, at: mouseScreen)
-        if lastIndex == idx { return }
-        lastIndex = idx
-        if idx >= 0 {
-            model.mouseHover(level: level, index: idx)
-        }
-        // If idx == -1 (between rows), leave current focus alone — keeps last
-        // hovered row highlighted while the cursor is in the gap. A genuine
-        // exit fires only when the cursor leaves the window entirely.
+        model?.mouseEnteredWindow(level: level)
     }
 }

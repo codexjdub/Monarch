@@ -12,6 +12,8 @@ Root shortcuts can also have a custom display name inside Monarch without renami
 
 Monarch also keeps a level-0 **Frequent** section for the files and folders you actually open through Monarch. It defaults to 3 items, but you can change that in Preferences. Items must be opened at least twice before they appear, older usage decays over time, and anything already configured as a root shortcut is excluded so the same path never appears twice. You can also hide an individual item from Frequent from its context menu.
 
+If you prefer a more hands-off launcher feel, Monarch can also optionally open when you hover the menu bar icon for a short delay.
+
 ## Requirements
 
 - macOS 13+
@@ -48,11 +50,13 @@ This compiles a release build, assembles `Monarch.app`, codesigns it ad-hoc, kil
 
 Open via the **···** menu → **Preferences…**
 
-- **Shortcuts** — drag to reorder, click **−** to remove
+- **Shortcuts** — drag to reorder, click **−** to remove, and drag the handle beneath the list to resize its own scrollable area
 - **Text size** — Small / Medium / Large; scales row height, font, and icon size together
+- **Appearance** — System / Light / Dark
 - **Show item count and size footer** — toggle the footer bar at the bottom of each level
+- **Open when hovering over the menu bar icon** — optional delayed hover-open for the status item
 - **Show Frequent section** — show or hide the level-0 Frequent group
-- **Frequent items shown** — choose how many Frequent items appear at level 0
+- **Items to show** — choose how many Frequent items appear at level 0
 - **Reset Frequent…** — clear the Frequent ranking and start fresh
 - **Launch at login** — start Monarch automatically when you log in
 - **Global hotkey** — record any key combo to open Monarch from anywhere (⌘, opens Preferences from the popover)
