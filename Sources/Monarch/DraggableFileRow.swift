@@ -192,11 +192,17 @@ extension DraggableNSView /* Drop Target */ {
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         guard let (urls, dest) = acceptableDrop(sender) else { return false }
         let op = FileDropHelper.preferredOperation(sources: urls, dest: dest)
-        let n = FileDropHelper.perform(urls: urls, into: dest, operation: op)
         isDropTarget = false
-        let failed = urls.count - n
-        if failed > 0 {
-            DispatchQueue.main.async {
+
+        // Run copy/move work off-main so large or cross-volume drops don't
+        // freeze the popover. The drag system needs a synchronous Bool here,
+        // so we optimistically report success — failures surface as an alert
+        // once the work finishes (Finder behaves the same way).
+        Task.detached(priority: .userInitiated) {
+            let n = FileDropHelper.perform(urls: urls, into: dest, operation: op)
+            let failed = urls.count - n
+            guard failed > 0 else { return }
+            await MainActor.run {
                 let alert = NSAlert()
                 alert.messageText = failed == urls.count
                     ? "The operation couldn't be completed."
@@ -206,7 +212,7 @@ extension DraggableNSView /* Drop Target */ {
                 alert.runModal()
             }
         }
-        return n > 0
+        return true
     }
 
     override func draw(_ dirtyRect: NSRect) {
