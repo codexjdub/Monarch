@@ -37,6 +37,7 @@ final class CascadeModel: ObservableObject {
     @Published var filterText: [Int: String] = [:]
     @Published var searchVisible: [Int: Bool] = [:]
     @Published var focusSearchLevel: Int? = nil
+    @Published private(set) var filterHighlightIndex: [Int: Int] = [:]
 
     // Collaborators
     private let shortcutStore: ShortcutStore
@@ -55,6 +56,7 @@ final class CascadeModel: ObservableObject {
 
     // FSEvents watchers, one per .folder level (including level 0 roots).
     private var watchers: [Int: [FolderWatcher]] = [:]
+    private var level0WatcherPaths: [String] = []
 
     /// Monotonic token per level. Incremented whenever we kick off an async
     /// load; the async completion only applies if its token still matches.
@@ -132,6 +134,25 @@ final class CascadeModel: ObservableObject {
 
     // MARK: - Search
 
+    enum KeyIntent {
+        case moveUp
+        case moveDown
+        case moveLeft
+        case moveRight
+        case openFocused
+        case quickLookFocused
+        case escape
+        case showSearch
+        case insertSearchText(String)
+        case deleteSearchBackward
+    }
+
+    enum KeyIntentResult {
+        case handled
+        case unhandled
+        case quickLook(URL)
+    }
+
     func showSearch(forLevel level: Int) {
         searchVisible[level] = true
         focusSearchLevel = level
@@ -140,15 +161,114 @@ final class CascadeModel: ObservableObject {
     func hideSearch(forLevel level: Int) {
         searchVisible.removeValue(forKey: level)
         filterText.removeValue(forKey: level)
+        filterHighlightIndex.removeValue(forKey: level)
         if focusSearchLevel == level { focusSearchLevel = nil }
     }
 
-    func setFilter(_ text: String, forLevel level: Int) {
+    func setFilter(_ text: String, forLevel level: Int, deferFocus: Bool = false) {
         if text.isEmpty {
             filterText.removeValue(forKey: level)
+            filterHighlightIndex.removeValue(forKey: level)
         } else {
             filterText[level] = text
+            updateFilterHighlight(forLevel: level)
         }
+        if deferFocus {
+            DispatchQueue.main.async { [weak self] in
+                self?.focusFirstVisibleResult(forLevel: level)
+            }
+            return
+        }
+        focusFirstVisibleResult(forLevel: level)
+    }
+
+    func visibleIndices(forLevel level: Int) -> [Int] {
+        guard levels.indices.contains(level) else { return [] }
+        let items = levels[level].items
+        let filter = filterText[level]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !filter.isEmpty else { return Array(items.indices) }
+        return items.indices.filter { index in
+            itemMatchesFilter(items[index], filter: filter)
+        }
+    }
+
+    func isIndexVisible(_ index: Int, forLevel level: Int) -> Bool {
+        visibleIndices(forLevel: level).contains(index)
+    }
+
+    private func itemMatchesFilter(_ item: FileItem, filter: String) -> Bool {
+        item.displayName.localizedCaseInsensitiveContains(filter)
+            || item.name.localizedCaseInsensitiveContains(filter)
+    }
+
+    private func updateFilterHighlight(forLevel level: Int) {
+        guard filterText[level]?.isEmpty == false else {
+            filterHighlightIndex.removeValue(forKey: level)
+            return
+        }
+        filterHighlightIndex[level] = visibleIndices(forLevel: level).first ?? Focus.noFocus
+    }
+
+    private func focusFirstVisibleResult(forLevel level: Int) {
+        guard filterText[level]?.isEmpty == false else { return }
+        guard levels.indices.contains(level) else { return }
+        let visible = visibleIndices(forLevel: level)
+        if let first = visible.first {
+            setKeyboardFocus(Focus(level: level, index: first))
+        } else {
+            setKeyboardFocus(Focus(level: level, index: Focus.noFocus))
+        }
+    }
+
+    @discardableResult
+    func handleKeyIntent(_ intent: KeyIntent) -> KeyIntentResult {
+        switch intent {
+        case .moveUp:
+            keyUp()
+            return .handled
+        case .moveDown:
+            keyDown()
+            return .handled
+        case .moveLeft:
+            keyLeft()
+            return .handled
+        case .moveRight:
+            keyRight()
+            return .handled
+        case .openFocused:
+            keyReturn()
+            return .handled
+        case .quickLookFocused:
+            guard let item = focusedVisibleItem(), !item.isDirectory else { return .handled }
+            return .quickLook(item.url)
+        case .escape:
+            let level = focus.level
+            if searchVisible[level] == true {
+                hideSearch(forLevel: level)
+            } else {
+                keyEscape()
+            }
+            return .handled
+        case .showSearch:
+            showSearch(forLevel: focus.level)
+            return .handled
+        case .insertSearchText(let text):
+            guard searchVisible[focus.level] == true else { return .unhandled }
+            setFilter((filterText[focus.level] ?? "") + text, forLevel: focus.level)
+            return .handled
+        case .deleteSearchBackward:
+            guard searchVisible[focus.level] == true else { return .unhandled }
+            setFilter(String((filterText[focus.level] ?? "").dropLast()), forLevel: focus.level)
+            return .handled
+        }
+    }
+
+    func focusedVisibleItem() -> FileItem? {
+        let f = focus
+        guard levels.indices.contains(f.level),
+              levels[f.level].items.indices.contains(f.index),
+              isIndexVisible(f.index, forLevel: f.level) else { return nil }
+        return levels[f.level].items[f.index]
     }
 
     // MARK: - Init
@@ -270,17 +390,23 @@ final class CascadeModel: ObservableObject {
         }
         // Watch directory shortcuts so drilling in reflects live changes.
         // File shortcuts don't need watching (no folder listing to refresh).
+        updateFilterHighlight(forLevel: 0)
         installWatchersForLevel0()
     }
 
     private func installWatchersForLevel0() {
+        let folderShortcuts = shortcutStore.shortcuts.filter { $0.url.hasDirectoryPath }
+        let paths = folderShortcuts.map { $0.url.standardizedFileURL.path }
+        guard paths != level0WatcherPaths else { return }
+
         var ws: [FolderWatcher] = []
-        for shortcut in shortcutStore.shortcuts where shortcut.url.hasDirectoryPath {
+        for shortcut in folderShortcuts {
             ws.append(FolderWatcher(url: shortcut.url) { [weak self] in
                 self?.folderDidChange(url: shortcut.url)
             })
         }
         watchers[0] = ws
+        level0WatcherPaths = paths
     }
 
     private func installWatcher(forLevel level: Int, url: URL) {
@@ -293,6 +419,7 @@ final class CascadeModel: ObservableObject {
 
     private func removeWatchers(forLevel level: Int) {
         watchers[level] = nil
+        if level == 0 { level0WatcherPaths = [] }
     }
 
     /// FSEvents fired for `url`. Reload any .folder levels whose source
@@ -341,6 +468,7 @@ final class CascadeModel: ObservableObject {
               levels[level].source == src else { return }
         let newItems = result.items
         levels[level].setContents(result.items, result.sections, totalSize: result.totalSize, readError: result.readError)
+        updateFilterHighlight(forLevel: level)
 
         // Restore focus.
         if let focusedURL, let newIdx = newItems.firstIndex(where: { $0.url == focusedURL }) {
@@ -499,34 +627,55 @@ final class CascadeModel: ObservableObject {
     func keyUp() {
         let l = focus.level
         guard levels.indices.contains(l) else { return }
-        let n = levels[l].items.count
-        guard n > 0 else { return }
+        let visible = visibleIndices(forLevel: l)
         cancelPendingOpen()
         pendingClose?.cancel(); pendingClose = nil
-        // No focus yet → ↑ jumps to last item; otherwise move up, clamped at 0.
-        let next = focus.index < 0 ? n - 1 : max(0, focus.index - 1)
+        guard !visible.isEmpty else {
+            setKeyboardFocus(Focus(level: l, index: Focus.noFocus))
+            return
+        }
+        // No visible focus yet -> up jumps to the last visible item.
+        let next: Int
+        if let position = visible.firstIndex(of: focus.index) {
+            next = visible[max(0, position - 1)]
+        } else {
+            next = visible.last ?? Focus.noFocus
+        }
         setKeyboardFocus(Focus(level: l, index: next))
     }
 
     func keyDown() {
         let l = focus.level
         guard levels.indices.contains(l) else { return }
-        let n = levels[l].items.count
-        guard n > 0 else { return }
+        let visible = visibleIndices(forLevel: l)
         cancelPendingOpen()
         pendingClose?.cancel(); pendingClose = nil
-        // No focus yet → ↓ jumps to first item; otherwise move down, clamped at end.
-        let next = focus.index < 0 ? 0 : min(n - 1, focus.index + 1)
+        guard !visible.isEmpty else {
+            setKeyboardFocus(Focus(level: l, index: Focus.noFocus))
+            return
+        }
+        // No visible focus yet -> down jumps to the first visible item.
+        let next: Int
+        if let position = visible.firstIndex(of: focus.index) {
+            next = visible[min(visible.count - 1, position + 1)]
+        } else {
+            next = visible.first ?? Focus.noFocus
+        }
         setKeyboardFocus(Focus(level: l, index: next))
     }
 
     func keyRight() { keyboardDrillIn() }
     func keyLeft()  { keyboardDrillOut() }
 
+    func hasPreviewChild(ofLevel level: Int) -> Bool {
+        levels.indices.contains(level + 1) && levels[level + 1].isPreview
+    }
+
     func keyReturn() {
         let l = focus.level
         guard levels.indices.contains(l),
-              levels[l].items.indices.contains(focus.index) else { return }
+              levels[l].items.indices.contains(focus.index),
+              isIndexVisible(focus.index, forLevel: l) else { return }
         let item = levels[l].items[focus.index]
         if l == 0, item.role == .rootShortcut, !item.exists {
             handleMissingShortcut(url: item.url)
@@ -553,7 +702,8 @@ final class CascadeModel: ObservableObject {
     private func keyboardDrillIn() {
         let l = focus.level
         guard levels.indices.contains(l),
-              levels[l].items.indices.contains(focus.index) else { return }
+              levels[l].items.indices.contains(focus.index),
+              isIndexVisible(focus.index, forLevel: l) else { return }
         let item = levels[l].items[focus.index]
         cancelPendingOpen()
         if item.isDirectory {
@@ -569,12 +719,15 @@ final class CascadeModel: ObservableObject {
     private func keyboardDrillOut() {
         cancelPendingOpen()
         let l = focus.level
-        if l == 0 { onDismiss(); return }
         // If a preview is open one level deeper, ← closes just the preview
         // and leaves focus on the current folder listing. If the deeper level
         // is a folder peek (or nothing), ← collapses back to the parent.
-        let deeperIsPreview = levels.indices.contains(l + 1) && levels[l + 1].isPreview
-        closeDeeperThan(deeperIsPreview ? l : l - 1)
+        if hasPreviewChild(ofLevel: l) {
+            closeDeeperThan(l)
+            return
+        }
+        if l == 0 { onDismiss(); return }
+        closeDeeperThan(l - 1)
     }
 
     // MARK: - Spring-loaded folders (drag hover opens peek)
@@ -826,6 +979,10 @@ final class CascadeModel: ObservableObject {
 
     func setRootDisplayName(_ displayName: String?, for url: URL) {
         shortcutStore.setAlias(displayName, for: url)
+    }
+
+    func replaceRootShortcut(oldURL: URL, newURL: URL) {
+        shortcutStore.replace(oldURL: oldURL, newURL: newURL)
     }
 
     func isInRoot(_ url: URL) -> Bool {

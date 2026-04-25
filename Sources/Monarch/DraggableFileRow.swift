@@ -21,6 +21,7 @@ class DraggableNSView: NSView, NSDraggingSource {
     var selectionState: SelectionState?
     var parentFolder: URL?
     var removeFromRootHandler: (() -> Void)?
+    var replaceRootHandler: ((URL, URL) -> Void)?
     var updateRootDisplayNameHandler: ((URL, String?) -> Void)?
     var addToRootHandler: ((URL) -> Void)?
     var hideFromFrequentHandler: (() -> Void)?
@@ -32,6 +33,9 @@ class DraggableNSView: NSView, NSDraggingSource {
     fileprivate var mouseDownEvent: NSEvent?
     fileprivate var dragStarted = false
     fileprivate var hoverTrackingArea: NSTrackingArea?
+    fileprivate var rowIsFocused = false
+    fileprivate var rowIsOnPath = false
+    fileprivate var rowIsSelected = false
 
     // MARK: Drop target state
 
@@ -70,6 +74,27 @@ class DraggableNSView: NSView, NSDraggingSource {
         addTrackingArea(area)
         hoverTrackingArea = area
         syncHoverIfInside()
+    }
+
+    func setRowHighlight(isFocused: Bool, isOnPath: Bool, isSelected: Bool) {
+        rowIsFocused = isFocused
+        rowIsOnPath = isOnPath
+        rowIsSelected = isSelected
+        updateRowHighlight()
+    }
+
+    private func updateRowHighlight() {
+        let color: NSColor
+        if rowIsFocused {
+            color = NSColor.controlAccentColor.withAlphaComponent(0.30)
+        } else if rowIsOnPath {
+            color = NSColor.controlAccentColor.withAlphaComponent(0.22)
+        } else if rowIsSelected {
+            color = NSColor.controlAccentColor.withAlphaComponent(0.25)
+        } else {
+            color = .clear
+        }
+        layer?.backgroundColor = color.cgColor
     }
 
     override func mouseEntered(with event: NSEvent) {
@@ -565,6 +590,21 @@ extension DraggableNSView /* Actions */ {
     @objc private func moveToTrash() {
         let urls = currentActionURLs()
         guard !urls.isEmpty else { return }
+        if urls.count == 1,
+           fileItem?.role == .rootShortcut,
+           removeFromRootHandler != nil {
+            NSWorkspace.shared.recycle(urls) { [weak self] _, error in
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    if let error {
+                        self.showFileOperationError(title: "Couldn't Move to Trash", error: error)
+                    } else {
+                        self.removeFromRootHandler?()
+                    }
+                }
+            }
+            return
+        }
         NSWorkspace.shared.recycle(urls, completionHandler: nil)
     }
 
@@ -588,12 +628,19 @@ extension DraggableNSView /* Actions */ {
         let dest = item.url.deletingLastPathComponent().appendingPathComponent(newName)
         do {
             try FileManager.default.moveItem(at: item.url, to: dest)
+            if item.role == .rootShortcut {
+                replaceRootHandler?(item.url, dest)
+            }
         } catch {
-            let err = NSAlert()
-            err.messageText = "Couldn't Rename"
-            err.informativeText = error.localizedDescription
-            err.runModal()
+            showFileOperationError(title: "Couldn't Rename", error: error)
         }
+    }
+
+    private func showFileOperationError(title: String, error: Error) {
+        let err = NSAlert()
+        err.messageText = title
+        err.informativeText = error.localizedDescription
+        err.runModal()
     }
 
     @objc private func newFolderInsideAction() {
@@ -652,6 +699,7 @@ struct DraggableFileRow: NSViewRepresentable {
     var parentFolder: URL? = nil
     var onSpringLoad: (() -> Void)? = nil
     var removeFromRootHandler: (() -> Void)? = nil
+    var replaceRootHandler: ((URL, URL) -> Void)? = nil
     var updateRootDisplayNameHandler: ((URL, String?) -> Void)? = nil
     var addToRootHandler: ((URL) -> Void)? = nil
     var hideFromFrequentHandler: (() -> Void)? = nil
@@ -665,13 +713,21 @@ struct DraggableFileRow: NSViewRepresentable {
         view.parentFolder = parentFolder
         view.onSpringLoad = onSpringLoad
         view.removeFromRootHandler = removeFromRootHandler
+        view.replaceRootHandler = replaceRootHandler
         view.updateRootDisplayNameHandler = updateRootDisplayNameHandler
         view.addToRootHandler = addToRootHandler
         view.hideFromFrequentHandler = hideFromFrequentHandler
 
         let hosting = NSHostingView(rootView: makeContent())
+        hosting.wantsLayer = true
+        hosting.layer?.backgroundColor = NSColor.clear.cgColor
         hosting.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(hosting)
+        view.setRowHighlight(
+            isFocused: isFocused,
+            isOnPath: isOnPath,
+            isSelected: selectionState.isSelected(item.url)
+        )
         NSLayoutConstraint.activate([
             hosting.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             hosting.trailingAnchor.constraint(equalTo: view.trailingAnchor),
@@ -689,11 +745,18 @@ struct DraggableFileRow: NSViewRepresentable {
         nsView.parentFolder = parentFolder
         nsView.onSpringLoad = onSpringLoad
         nsView.removeFromRootHandler = removeFromRootHandler
+        nsView.replaceRootHandler = replaceRootHandler
         nsView.updateRootDisplayNameHandler = updateRootDisplayNameHandler
         nsView.addToRootHandler = addToRootHandler
         nsView.hideFromFrequentHandler = hideFromFrequentHandler
+        nsView.setRowHighlight(
+            isFocused: isFocused,
+            isOnPath: isOnPath,
+            isSelected: selectionState.isSelected(item.url)
+        )
         if let hosting = nsView.subviews.first as? NSHostingView<FileRowContent> {
             hosting.rootView = makeContent()
+            hosting.needsDisplay = true
         }
     }
 

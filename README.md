@@ -35,16 +35,20 @@ This compiles a release build, assembles `Monarch.app`, codesigns it ad-hoc, kil
 | Hover a folder row | Open peek window |
 | Click a file | Open the file |
 | Click a folder | Reveal in Finder |
-| Arrow keys | Navigate rows |
-| Return | Open focused item |
+| ↑ / ↓ | Move highlighted row |
+| → | Open folder peek or file preview for highlighted row |
+| ← | Go back one peek level; at level 0, close Monarch |
+| Return | Open highlighted item |
 | Space | Quick Look focused file |
 | ⌘F | Search / filter the current level |
-| Esc | Close peek / close Monarch |
+| Esc | Exit search first, then close peek / close Monarch |
 | Drag file/folder onto menu bar icon | Add it to your shortcuts |
 | Drag file onto folder row | Move/copy into that folder |
 | Hold drag over folder (500ms) | Spring-load: peek opens mid-drag |
 | ⌘-click rows | Multi-select for bulk drag or open |
 | Right-click a row | Context menu (pin, rename, set display name for root shortcuts, add to Monarch, open in Terminal, copy path, share, trash…) |
+
+In search mode, `←` keeps its normal text-editing behavior in the search field. Use `Esc` to exit search, then `←` to navigate back or close Monarch. Exception: if a file preview peek is open, `←` closes that preview first even while search is active.
 
 ## Preferences
 

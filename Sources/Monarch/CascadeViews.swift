@@ -289,14 +289,23 @@ struct LevelListBody: View {
     private var activeFilter: String { model.filterText[level] ?? "" }
     private var isFiltering: Bool { !activeFilter.isEmpty }
 
-    /// Items to display — filtered when a search is active, full list otherwise.
-    private var displayItems: [FileItem] {
-        guard let s = state else { return [] }
-        guard isFiltering else { return s.items }
-        return s.items.filter {
-            $0.displayName.localizedCaseInsensitiveContains(activeFilter)
-            || $0.name.localizedCaseInsensitiveContains(activeFilter)
+    /// Original item indices to display. The model owns this so visible rows
+    /// and keyboard navigation use identical filtering rules.
+    private var displayIndices: [Int] {
+        model.visibleIndices(forLevel: level)
+    }
+
+    private var activeDisplayIndex: Int? {
+        guard model.focus.level == level else { return nil }
+        if displayIndices.contains(model.focus.index) {
+            return model.focus.index
         }
+        if isFiltering,
+           let highlighted = model.filterHighlightIndex[level],
+           displayIndices.contains(highlighted) {
+            return highlighted
+        }
+        return isFiltering ? displayIndices.first : nil
     }
 
     private var showFooter: Bool {
@@ -316,7 +325,7 @@ struct LevelListBody: View {
                     Divider()
                 }
                 if let state {
-                    if displayItems.isEmpty {
+                    if displayIndices.isEmpty {
                         emptyView
                     } else {
                         scrollView(state: state)
@@ -360,7 +369,7 @@ struct LevelListBody: View {
                 // The popover window can become key — use a real text field.
                 TextField("Filter…", text: Binding(
                     get: { model.filterText[level] ?? "" },
-                    set: { model.setFilter($0, forLevel: level) }
+                    set: { model.setFilter($0, forLevel: level, deferFocus: true) }
                 ))
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
@@ -426,7 +435,7 @@ struct LevelListBody: View {
 
     @ViewBuilder private func footerView(state: CascadeModel.Level) -> some View {
         let totalCount = state.items.count
-        let shownCount = displayItems.count
+        let shownCount = displayIndices.count
         let label: String = {
             let countText: String
             if isFiltering {
@@ -474,12 +483,10 @@ struct LevelListBody: View {
             ScrollView {
                 LazyVStack(spacing: 0) {
                     if isFiltering {
-                        // Flat filtered list. Looks up original index so model
-                        // calls (click, focus, spring-load) remain correct.
-                        ForEach(displayItems, id: \.id) { item in
-                            if let idx = state.items.firstIndex(where: { $0.id == item.id }) {
-                                rowView(state: state, item: item, idx: idx)
-                            }
+                        // Flat filtered list, preserving original indices so
+                        // model calls (click, focus, spring-load) remain correct.
+                        ForEach(displayIndices, id: \.self) { idx in
+                            rowView(state: state, item: state.items[idx], idx: idx)
                         }
                     } else if state.sections.isEmpty {
                         rowsView(state: state, range: state.items.indices)
@@ -494,7 +501,8 @@ struct LevelListBody: View {
             .onChange(of: model.keyboardFocusVersion) { _ in
                 let f = model.focus
                 guard f.level == level,
-                      state.items.indices.contains(f.index) else { return }
+                      state.items.indices.contains(f.index),
+                      model.isIndexVisible(f.index, forLevel: level) else { return }
                 withAnimation(.none) {
                     sp.scrollTo(state.items[f.index].id, anchor: .center)
                 }
@@ -552,12 +560,14 @@ struct LevelListBody: View {
 
     @ViewBuilder
     private func rowView(state: CascadeModel.Level, item: FileItem, idx: Int) -> some View {
+        let isActive = activeDisplayIndex == idx
+        let isPath = model.pathIndices[level] == idx && level + 1 < model.levels.count
         DraggableFileRow(
             item: item,
             onTap: { model.clickRow(level: level, index: idx) },
             selectionState: selectionState,
-            isFocused: model.focus.level == level && model.focus.index == idx,
-            isOnPath: model.pathIndices[level] == idx && level + 1 < model.levels.count,
+            isFocused: isActive,
+            isOnPath: isPath,
             onHover: { model.mouseHover(level: level, index: idx) },
             parentFolder: state.source,
             onSpringLoad: item.isDirectory
@@ -565,6 +575,9 @@ struct LevelListBody: View {
                 : nil,
             removeFromRootHandler: level == 0 && item.role == .rootShortcut
                 ? { model.onRemoveRoot?(item.url) }
+                : nil,
+            replaceRootHandler: level == 0 && item.role == .rootShortcut
+                ? { oldURL, newURL in model.replaceRootShortcut(oldURL: oldURL, newURL: newURL) }
                 : nil,
             updateRootDisplayNameHandler: level == 0 && item.role == .rootShortcut
                 ? { url, displayName in model.setRootDisplayName(displayName, for: url) }
@@ -576,6 +589,7 @@ struct LevelListBody: View {
                 ? { FrequentStore.shared.hide(item.url) }
                 : nil
         )
+        .id("\(item.id.uuidString)-\(isActive ? "active" : "idle")-\(isPath ? "path" : "offpath")")
         .frame(height: density.rowHeight)
         .id(item.id)
         .background(RowFrameReporter(level: level, index: idx, model: model))

@@ -4,7 +4,9 @@ import SwiftUI
 
 @MainActor
 class StatusItemController: NSObject {
-    private static let hoverOpenDelay: TimeInterval = 0.28
+    private static let hoverOpenDelay: TimeInterval = 0.20
+    private static let postOpenActivationDelayNanoseconds: UInt64 = 40_000_000
+    private static let postOpenRefreshDelayNanoseconds: UInt64 = 260_000_000
 
     private let store: ShortcutStore
     private var statusItem: NSStatusItem
@@ -176,7 +178,7 @@ class StatusItemController: NSObject {
         popoverPostOpenTask?.cancel()
         popoverPostOpenTask = Task { @MainActor [weak self] in
             defer { self?.popoverPostOpenTask = nil }
-            try? await Task.sleep(nanoseconds: 40_000_000)
+            try? await Task.sleep(nanoseconds: Self.postOpenActivationDelayNanoseconds)
             guard !Task.isCancelled,
                   let self,
                   self.popover.isShown else { return }
@@ -184,7 +186,7 @@ class StatusItemController: NSObject {
             NSApp.activate(ignoringOtherApps: true)
             self.installKeyMonitor()
             self.installDragMonitor()
-            await Task.yield()
+            try? await Task.sleep(nanoseconds: Self.postOpenRefreshDelayNanoseconds)
             guard !Task.isCancelled, self.popover.isShown else { return }
             self.model.reloadAll()
         }
@@ -232,7 +234,6 @@ class StatusItemController: NSObject {
         guard keyMonitor == nil else { return }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
-            let fl = self.model.focus.level
 
             // ⌘,: open Preferences.
             if event.keyCode == 43,
@@ -241,74 +242,101 @@ class StatusItemController: NSObject {
                 return nil
             }
 
-            // ⌘F: show/focus search bar (intercept even when a text field is active).
-            if event.keyCode == 3,
-               event.modifierFlags.intersection([.command, .option, .shift, .control]) == .command {
-                self.model.showSearch(forLevel: fl)
+            let textFieldActive = self.isPopoverTextFieldActive
+            if let intent = self.keyIntent(for: event, popoverTextFieldActive: textFieldActive) {
+                return self.handleKeyIntent(intent) ? nil : event
+            }
+            if self.shouldSuppressStalePopoverTextInput(event, popoverTextFieldActive: textFieldActive) {
                 return nil
             }
-
-            // Escape: dismiss search before normal escape handling.
-            if event.keyCode == 53, self.model.searchVisible[fl] == true {
-                self.model.hideSearch(forLevel: fl)
-                return nil
-            }
-
-            // Virtual typing for peek search bars.
-            // Peek windows can't become key, so their text fields can't receive
-            // focus. Intercept printable characters and write them directly into
-            // model.filterText for the active peek level.
-            if fl > 0, self.model.searchVisible[fl] == true {
-                let noMod = event.modifierFlags
-                    .intersection([.command, .option, .control]).isEmpty
-                if noMod {
-                    if event.keyCode == 51 {  // ⌫ backspace
-                        let cur = self.model.filterText[fl] ?? ""
-                        self.model.setFilter(String(cur.dropLast()), forLevel: fl)
-                        return nil
-                    }
-                    if let chars = event.characters, !chars.isEmpty,
-                       chars.unicodeScalars.allSatisfy({ $0.value >= 32 && $0.value != 127 }) {
-                        let cur = self.model.filterText[fl] ?? ""
-                        self.model.setFilter(cur + chars, forLevel: fl)
-                        return nil
-                    }
-                }
-            }
-
-            // Don't intercept other keys while the level-0 real text field is focused.
-            let textFieldActive = NSApp.windows.contains {
-                $0.isVisible && $0.firstResponder is NSTextView
-            }
-            if textFieldActive { return event }
-
-            switch event.keyCode {
-            case 126: self.model.keyUp();     return nil
-            case 125: self.model.keyDown();   return nil
-            case 124: self.model.keyRight();  return nil
-            case 123: self.model.keyLeft();   return nil
-            case 36, 76: self.model.keyReturn(); return nil
-            case 49:  // Space → QuickLook the focused row
-                if let item = self.focusedItem() {
-                    QuickLookManager.shared.show(urls: [item.url])
-                }
-                return nil
-            case 53:  // Esc
-                self.model.keyEscape()
-                if !self.popover.isShown { return nil }
-                // If nothing to back out of, close popover.
-                if self.model.levels.count == 1 { self.popover.performClose(nil) }
-                return nil
-            default: return event
-            }
+            return event
         }
     }
 
-    private func focusedItem() -> FileItem? {
-        let f = model.focus
-        guard model.levels.indices.contains(f.level),
-              model.levels[f.level].items.indices.contains(f.index) else { return nil }
-        return model.levels[f.level].items[f.index]
+    private var isPopoverTextFieldActive: Bool {
+        popover.contentViewController?.view.window?.firstResponder is NSTextView
+    }
+
+    private func keyIntent(for event: NSEvent,
+                           popoverTextFieldActive: Bool) -> CascadeModel.KeyIntent? {
+        // ⌘F: show/focus search bar, even when the search field is active.
+        if event.keyCode == 3,
+           event.modifierFlags.intersection([.command, .option, .shift, .control]) == .command {
+            return .showSearch
+        }
+
+        // Let system/app shortcuts that use these modifiers pass through.
+        guard event.modifierFlags.intersection([.command, .option, .control]).isEmpty else {
+            return nil
+        }
+
+        let activeLevel = model.focus.level
+        let activeSearchVisible = model.searchVisible[activeLevel] == true
+
+        switch event.keyCode {
+        case 126: return .moveUp
+        case 125: return .moveDown
+        case 124: return .moveRight
+        case 123:
+            // In the level-0 search field, left arrow should still edit the query
+            // unless a preview is open; then it should close that preview first.
+            if popoverTextFieldActive,
+               activeLevel == 0,
+               activeSearchVisible,
+               !model.hasPreviewChild(ofLevel: activeLevel) {
+                return nil
+            }
+            return .moveLeft
+        case 36, 76:
+            return .openFocused
+        case 53:
+            return .escape
+        case 49:
+            if activeSearchVisible {
+                if popoverTextFieldActive, activeLevel == 0 { return nil }
+                return .insertSearchText(" ")
+            }
+            return .quickLookFocused
+        case 51:
+            guard activeSearchVisible else { return nil }
+            if popoverTextFieldActive, activeLevel == 0 { return nil }
+            return .deleteSearchBackward
+        default:
+            guard activeSearchVisible,
+                  let text = printableText(from: event) else { return nil }
+            if popoverTextFieldActive, activeLevel == 0 { return nil }
+            return .insertSearchText(text)
+        }
+    }
+
+    private func handleKeyIntent(_ intent: CascadeModel.KeyIntent) -> Bool {
+        switch model.handleKeyIntent(intent) {
+        case .handled:
+            return true
+        case .quickLook(let url):
+            QuickLookManager.shared.show(urls: [url])
+            return true
+        case .unhandled:
+            return false
+        }
+    }
+
+    private func printableText(from event: NSEvent) -> String? {
+        guard let chars = event.characters, !chars.isEmpty,
+              chars.unicodeScalars.allSatisfy({ $0.value >= 32 && $0.value != 127 })
+        else { return nil }
+        return chars
+    }
+
+    private func shouldSuppressStalePopoverTextInput(_ event: NSEvent,
+                                                     popoverTextFieldActive: Bool) -> Bool {
+        guard popoverTextFieldActive,
+              model.focus.level > 0,
+              model.searchVisible[0] == true,
+              model.searchVisible[model.focus.level] != true,
+              event.modifierFlags.intersection([.command, .option, .control]).isEmpty
+        else { return false }
+        return event.keyCode == 51 || printableText(from: event) != nil
     }
 
     private func removeKeyMonitor() {
