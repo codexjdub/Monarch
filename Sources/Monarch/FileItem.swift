@@ -118,10 +118,13 @@ struct FileItem: Identifiable, Hashable {
         let trimmedSubtitle = subtitleOverride?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         self.subtitleOverride = trimmedSubtitle.isEmpty ? nil : trimmedSubtitle
         self.icon = NSWorkspace.shared.icon(forFile: url.path)
-        self.exists = FileManager.default.fileExists(atPath: url.path)
 
-        // Batch-fetch isDirectory + fileSize + mtime in one syscall.
+        // Batch-fetch isDirectory + fileSize + mtime in one syscall. A
+        // successful fetch implies the path is reachable, so `exists` is
+        // derived from the same call instead of paying for a separate
+        // FileManager.fileExists stat per item.
         let resources = try? url.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey])
+        self.exists = resources != nil
         self.contentModifiedAt = resources?.contentModificationDate
         let isDir = resources?.isDirectory ?? false
         self.isDirectory = isDir
