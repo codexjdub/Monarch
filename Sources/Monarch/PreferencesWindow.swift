@@ -362,6 +362,10 @@ struct HotkeyRecorderView: View {
                 )
         }
         .buttonStyle(.plain)
+        // Tear the local key monitor down when the view goes away (e.g. user
+        // closes Preferences mid-recording). Otherwise the monitor outlives
+        // the view and silently consumes the next modifier-keystroke.
+        .onDisappear { stopRecording() }
     }
 
     private func toggleRecording() {

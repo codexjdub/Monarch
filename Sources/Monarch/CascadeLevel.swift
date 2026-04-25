@@ -152,26 +152,47 @@ extension CascadeModel {
             )
         }
 
-        let totalSize: Int64 = contents.reduce(0) { $0 + Int64(attrs[$1]?.fileSize ?? 0) }
-
-        let allSorted = contents
+        let visibleItems = contents
             .map { FileItem(url: $0) }
             .filter { showHidden || !$0.isHidden }
-            .sorted { a, b in
-                if a.isDirectory != b.isDirectory { return a.isDirectory }
-                let ascending: Bool
-                switch sortOrder {
-                case .name:
-                    ascending = a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
-                case .dateModified:
-                    ascending = (attrs[a.url]?.modDate ?? .distantPast) < (attrs[b.url]?.modDate ?? .distantPast)
-                case .dateCreated:
-                    ascending = (attrs[a.url]?.createDate ?? .distantPast) < (attrs[b.url]?.createDate ?? .distantPast)
-                case .fileType:
-                    ascending = a.url.pathExtension.localizedCaseInsensitiveCompare(b.url.pathExtension) == .orderedAscending
-                }
-                return descending ? !ascending : ascending
+
+        // Footer total reflects what the user actually sees: when hidden files
+        // are filtered out, their bytes are excluded too.
+        let totalSize: Int64 = visibleItems.reduce(0) { $0 + Int64(attrs[$1.url]?.fileSize ?? 0) }
+
+        // Three-way comparator. Returning the raw `ComparisonResult` (and a
+        // name tie-break for ties on the primary key) keeps the sort closure
+        // a strict weak ordering — Bool inversion of an `ascending` flag was
+        // unsafe because equal keys mapped to `true` in both directions.
+        let allSorted = visibleItems.sorted { a, b in
+            if a.isDirectory != b.isDirectory { return a.isDirectory }
+            let primary: ComparisonResult
+            switch sortOrder {
+            case .name:
+                primary = a.name.localizedCaseInsensitiveCompare(b.name)
+            case .dateModified:
+                let da = attrs[a.url]?.modDate ?? .distantPast
+                let db = attrs[b.url]?.modDate ?? .distantPast
+                primary = da < db ? .orderedAscending : (da > db ? .orderedDescending : .orderedSame)
+            case .dateCreated:
+                let da = attrs[a.url]?.createDate ?? .distantPast
+                let db = attrs[b.url]?.createDate ?? .distantPast
+                primary = da < db ? .orderedAscending : (da > db ? .orderedDescending : .orderedSame)
+            case .fileType:
+                primary = a.url.pathExtension.localizedCaseInsensitiveCompare(b.url.pathExtension)
             }
+            // Tie-break by name so equal primary keys (same extension, same
+            // mtime, etc.) fall into a stable, human-readable order. The
+            // tie-break direction follows the chosen direction so descending
+            // sorts feel consistent.
+            let cmp: ComparisonResult
+            if primary == .orderedSame {
+                cmp = a.name.localizedCaseInsensitiveCompare(b.name)
+            } else {
+                cmp = primary
+            }
+            return descending ? cmp == .orderedDescending : cmp == .orderedAscending
+        }
 
         // Build sections: Pinned, Recent, All.
         let pinnedSet = Set(pinnedURLs.map(\.path))
