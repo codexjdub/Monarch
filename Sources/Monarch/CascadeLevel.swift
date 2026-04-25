@@ -82,11 +82,12 @@ extension CascadeModel {
             if case .folder(_, _, let frames) = content { return frames }
             return [:]
         }
-        /// For .folder levels, swap in new items + sections without touching frames.
+        /// For .folder levels, swap in new items + sections and clear frame
+        /// reports because they are index-based and belong to the old contents.
         /// Clears `isLoading` — by the time contents arrive, loading is done.
         mutating func setContents(_ newItems: [FileItem], _ newSections: [Section], totalSize: Int64? = nil, readError: Bool = false) {
-            if case .folder(_, _, let frames) = content {
-                content = .folder(items: newItems, sections: newSections, rowFrames: frames)
+            if case .folder = content {
+                content = .folder(items: newItems, sections: newSections, rowFrames: [:])
             }
             if let totalSize { self.totalSize = totalSize }
             self.readError = readError

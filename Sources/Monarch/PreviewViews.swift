@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import PDFKit
 import Quartz
+import Darwin
 
 // MARK: - Preview Level View
 //
@@ -312,6 +313,46 @@ struct ArchivePreviewView: View {
     @State private var entries: [ArchiveEntry] = []
     @State private var isLoading = true
     @State private var failed = false
+    @State private var listingWasLimited = false
+
+    private enum ListingLimits {
+        static let timeoutMilliseconds = 3_000
+        static let maxOutputBytes = 512 * 1_024
+        static let maxEntries = 2_000
+    }
+
+    private struct ArchiveCommandResult {
+        let lines: [String]
+        let success: Bool
+        let timedOut: Bool
+        let outputTruncated: Bool
+    }
+
+    private final class LimitedOutputBuffer: @unchecked Sendable {
+        private let lock = NSLock()
+        private var data = Data()
+        private var truncated = false
+
+        func append(_ chunk: Data, maxBytes: Int) {
+            guard !chunk.isEmpty else { return }
+            lock.lock()
+            defer { lock.unlock() }
+
+            let remaining = max(0, maxBytes - data.count)
+            if remaining > 0 {
+                data.append(contentsOf: chunk.prefix(remaining))
+            }
+            if chunk.count > remaining {
+                truncated = true
+            }
+        }
+
+        func snapshot() -> (data: Data, truncated: Bool) {
+            lock.lock()
+            defer { lock.unlock() }
+            return (data, truncated)
+        }
+    }
 
     var body: some View {
         Group {
@@ -366,7 +407,9 @@ struct ArchivePreviewView: View {
                     }
                     Divider()
                     let fileCount = entries.filter { !$0.isDirectory }.count
-                    Text("\(fileCount) file\(fileCount == 1 ? "" : "s")")
+                    Text(listingWasLimited
+                         ? "Showing first \(entries.count) entries"
+                         : "\(fileCount) file\(fileCount == 1 ? "" : "s")")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                         .padding(.vertical, 5)
@@ -380,33 +423,83 @@ struct ArchivePreviewView: View {
         let fileURL = url
         Task.detached(priority: .userInitiated) {
             let ext = fileURL.pathExtension.lowercased()
-            let (lines, ok) = ext == "zip"
+            let (lines, result) = ext == "zip"
                 ? Self.run("/usr/bin/unzip", args: ["-Z1", fileURL.path])
                 : Self.run("/usr/bin/tar",   args: ["-tf",  fileURL.path])
-            let parsed = lines
+            let completeLines = result.outputTruncated || result.timedOut ? Array(lines.dropLast()) : lines
+            let parsed = Array(completeLines
                 .map  { $0.trimmingCharacters(in: .whitespaces) }
                 .filter { !$0.isEmpty }
-                .map  { ArchiveEntry(path: $0) }
+                .prefix(ListingLimits.maxEntries)
+                .map  { ArchiveEntry(path: $0) })
+            let entryLimited = completeLines.count > parsed.count
             await MainActor.run {
                 self.entries = parsed
-                self.failed  = !ok && parsed.isEmpty
+                self.listingWasLimited = result.timedOut || result.outputTruncated || entryLimited
+                self.failed = !result.success && parsed.isEmpty
                 self.isLoading = false
             }
         }
     }
 
-    /// Run an executable, capture stdout line by line. Returns (lines, success).
-    nonisolated private static func run(_ exe: String, args: [String]) -> ([String], Bool) {
+    /// Run an executable with bounded time and output. Uses Process directly,
+    /// never a shell, so archive paths are passed as arguments.
+    nonisolated private static func run(_ exe: String, args: [String]) -> ([String], ArchiveCommandResult) {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: exe)
         proc.arguments = args
         let pipe = Pipe()
         proc.standardOutput = pipe
         proc.standardError  = Pipe()   // suppress stderr
-        do { try proc.run() } catch { return ([], false) }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        proc.waitUntilExit()
-        guard let output = String(data: data, encoding: .utf8) else { return ([], false) }
-        return (output.components(separatedBy: "\n"), proc.terminationStatus == 0)
+
+        let output = LimitedOutputBuffer()
+        let completed = DispatchSemaphore(value: 0)
+        proc.terminationHandler = { _ in completed.signal() }
+
+        do { try proc.run() } catch {
+            return ([], ArchiveCommandResult(lines: [], success: false, timedOut: false, outputTruncated: false))
+        }
+
+        pipe.fileHandleForReading.readabilityHandler = { handle in
+            output.append(handle.availableData, maxBytes: ListingLimits.maxOutputBytes)
+        }
+
+        let deadline = DispatchTime.now() + .milliseconds(ListingLimits.timeoutMilliseconds)
+        let timedOut = completed.wait(timeout: deadline) == .timedOut
+        var didExit = !timedOut
+
+        if timedOut {
+            proc.terminate()
+            didExit = completed.wait(timeout: .now() + .milliseconds(300)) == .success
+            if !didExit {
+                kill(proc.processIdentifier, SIGKILL)
+                didExit = completed.wait(timeout: .now() + .milliseconds(300)) == .success
+            }
+        }
+
+        pipe.fileHandleForReading.readabilityHandler = nil
+        if didExit {
+            output.append(pipe.fileHandleForReading.readDataToEndOfFile(),
+                          maxBytes: ListingLimits.maxOutputBytes)
+        }
+
+        let snapshot = output.snapshot()
+        let data = snapshot.data
+        guard let output = String(data: data, encoding: .utf8) else {
+            let result = ArchiveCommandResult(
+                lines: [],
+                success: false,
+                timedOut: timedOut,
+                outputTruncated: snapshot.truncated
+            )
+            return ([], result)
+        }
+        let result = ArchiveCommandResult(
+            lines: output.components(separatedBy: "\n"),
+            success: didExit && !timedOut && proc.terminationStatus == 0,
+            timedOut: timedOut,
+            outputTruncated: snapshot.truncated
+        )
+        return (result.lines, result)
     }
 }

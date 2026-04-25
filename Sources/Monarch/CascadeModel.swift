@@ -110,8 +110,21 @@ final class CascadeModel: ObservableObject {
     static let mouseReplaceDelay: TimeInterval = 0.06
     static let mouseCloseDelay:   TimeInterval = 0.30
 
+    private struct PendingHoverTarget: Equatable {
+        let level: Int
+        let index: Int
+        let url: URL
+    }
+
     private var pendingOpen:  DispatchWorkItem?
     private var pendingClose: DispatchWorkItem?
+    private var pendingHoverTarget: PendingHoverTarget?
+
+    private func cancelPendingOpen() {
+        pendingOpen?.cancel()
+        pendingOpen = nil
+        pendingHoverTarget = nil
+    }
 
     /// `true` while a cross-app drag is in flight. Suppresses tracking-area
     /// exits so peek windows stay open until the drag lands or is cancelled.
@@ -380,10 +393,18 @@ final class CascadeModel: ObservableObject {
               levels[level].items.indices.contains(index) else { return }
 
         pendingClose?.cancel(); pendingClose = nil
-        focus = Focus(level: level, index: index)
-
         let item = levels[level].items[index]
-        pendingOpen?.cancel(); pendingOpen = nil
+        let target = PendingHoverTarget(level: level, index: index, url: item.url)
+
+        if pendingOpen != nil,
+           pendingHoverTarget == target,
+           focus.level == level,
+           focus.index == index {
+            return
+        }
+
+        focus = Focus(level: level, index: index)
+        cancelPendingOpen()
 
         // Broken root shortcut → no peek, just trim any deeper stale window.
         if level == 0, item.role == .rootShortcut, !item.exists {
@@ -405,8 +426,12 @@ final class CascadeModel: ObservableObject {
                 : CascadeModel.mouseOpenDelay
             let url = item.url
             let task = DispatchWorkItem { [weak self] in
-                self?.openFolderPeek(atLevel: level + 1, folder: url, parentIndex: index)
+                guard let self else { return }
+                self.pendingOpen = nil
+                self.pendingHoverTarget = nil
+                self.openFolderPeek(atLevel: level + 1, folder: url, parentIndex: index)
             }
+            pendingHoverTarget = target
             pendingOpen = task
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: task)
             return
@@ -426,8 +451,12 @@ final class CascadeModel: ObservableObject {
                 : CascadeModel.mouseOpenDelay
             let url = item.url
             let task = DispatchWorkItem { [weak self] in
-                self?.openPreviewPeek(atLevel: level + 1, url: url, kind: kind, parentIndex: index)
+                guard let self else { return }
+                self.pendingOpen = nil
+                self.pendingHoverTarget = nil
+                self.openPreviewPeek(atLevel: level + 1, url: url, kind: kind, parentIndex: index)
             }
+            pendingHoverTarget = target
             pendingOpen = task
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: task)
             return
@@ -448,7 +477,7 @@ final class CascadeModel: ObservableObject {
     /// cancels the close.
     func mouseLeftWindow(level: Int) {
         guard !externalDragActive else { return }
-        pendingOpen?.cancel(); pendingOpen = nil
+        cancelPendingOpen()
         if level > 0, let parentIdx = pathIndices[level - 1] {
             focus = Focus(level: level - 1, index: parentIdx)
         } else if level == 0 {
@@ -472,7 +501,7 @@ final class CascadeModel: ObservableObject {
         guard levels.indices.contains(l) else { return }
         let n = levels[l].items.count
         guard n > 0 else { return }
-        pendingOpen?.cancel(); pendingOpen = nil
+        cancelPendingOpen()
         pendingClose?.cancel(); pendingClose = nil
         // No focus yet → ↑ jumps to last item; otherwise move up, clamped at 0.
         let next = focus.index < 0 ? n - 1 : max(0, focus.index - 1)
@@ -484,7 +513,7 @@ final class CascadeModel: ObservableObject {
         guard levels.indices.contains(l) else { return }
         let n = levels[l].items.count
         guard n > 0 else { return }
-        pendingOpen?.cancel(); pendingOpen = nil
+        cancelPendingOpen()
         pendingClose?.cancel(); pendingClose = nil
         // No focus yet → ↓ jumps to first item; otherwise move down, clamped at end.
         let next = focus.index < 0 ? 0 : min(n - 1, focus.index + 1)
@@ -526,7 +555,7 @@ final class CascadeModel: ObservableObject {
         guard levels.indices.contains(l),
               levels[l].items.indices.contains(focus.index) else { return }
         let item = levels[l].items[focus.index]
-        pendingOpen?.cancel(); pendingOpen = nil
+        cancelPendingOpen()
         if item.isDirectory {
             openFolderPeek(atLevel: l + 1, folder: item.url, parentIndex: focus.index)
             // Keyboard → on folder jumps focus into the new peek (spec B).
@@ -538,7 +567,7 @@ final class CascadeModel: ObservableObject {
     }
 
     private func keyboardDrillOut() {
-        pendingOpen?.cancel(); pendingOpen = nil
+        cancelPendingOpen()
         let l = focus.level
         if l == 0 { onDismiss(); return }
         // If a preview is open one level deeper, ← closes just the preview
@@ -557,7 +586,7 @@ final class CascadeModel: ObservableObject {
               levels[level].items.indices.contains(index) else { return }
         let item = levels[level].items[index]
         guard item.isDirectory else { return }
-        pendingOpen?.cancel(); pendingOpen = nil
+        cancelPendingOpen()
         openFolderPeek(atLevel: level + 1, folder: item.url, parentIndex: index)
         pathIndices[level] = index
     }
@@ -613,7 +642,20 @@ final class CascadeModel: ObservableObject {
 
     // MARK: - Peek open / close
 
-    private func openFolderPeek(atLevel level: Int, folder: URL, parentIndex: Int) {
+    private func openFolderPeek(atLevel level: Int, folder: URL, parentIndex: Int, allowAnchorRetry: Bool = true) {
+        guard let anchor = parentAnchor(forLevel: level, parentIndex: parentIndex) else {
+            if allowAnchorRetry {
+                DispatchQueue.main.async { [weak self] in
+                    self?.openFolderPeek(atLevel: level,
+                                         folder: folder,
+                                         parentIndex: parentIndex,
+                                         allowAnchorRetry: false)
+                }
+            } else {
+                closeDeeperThan(level - 1)
+            }
+            return
+        }
         closePeeks(atLevelsGreaterThan: level)
         // Install a placeholder level with empty contents; present the peek
         // immediately so hover feels instant. If this level already exists,
@@ -623,7 +665,7 @@ final class CascadeModel: ObservableObject {
         installWatcher(forLevel: level, url: folder)
         let content = AnyView(LevelListView(level: level, model: self))
         presentPeek(atLevel: level,
-                    parentIndex: parentIndex,
+                    anchor: anchor,
                     size: peekManager.defaultSize,
                     widthPolicy: .flexible(minWidth: peekManager.minimumFolderWidth),
                     content: content)
@@ -644,14 +686,28 @@ final class CascadeModel: ObservableObject {
         }
     }
 
-    private func openPreviewPeek(atLevel level: Int, url: URL, kind: PreviewKind, parentIndex: Int) {
+    private func openPreviewPeek(atLevel level: Int, url: URL, kind: PreviewKind, parentIndex: Int, allowAnchorRetry: Bool = true) {
+        guard let anchor = parentAnchor(forLevel: level, parentIndex: parentIndex) else {
+            if allowAnchorRetry {
+                DispatchQueue.main.async { [weak self] in
+                    self?.openPreviewPeek(atLevel: level,
+                                          url: url,
+                                          kind: kind,
+                                          parentIndex: parentIndex,
+                                          allowAnchorRetry: false)
+                }
+            } else {
+                closeDeeperThan(level - 1)
+            }
+            return
+        }
         closePeeks(atLevelsGreaterThan: level)
         removeWatchers(forLevel: level)
         let state = Level(source: url, content: .preview(kind: kind, url: url))
         guard installLevel(state, atLevel: level, parentIndex: parentIndex) else { return }
         let content = AnyView(PreviewLevelView(level: level, url: url, kind: kind, model: self))
         presentPeek(atLevel: level,
-                    parentIndex: parentIndex,
+                    anchor: anchor,
                     size: PeekWindowManager.previewSize(for: url, kind: kind),
                     content: content)
     }
@@ -676,16 +732,22 @@ final class CascadeModel: ObservableObject {
     }
 
     private func presentPeek(atLevel level: Int,
-                             parentIndex: Int,
+                             anchor: NSRect,
                              size: NSSize,
                              widthPolicy: PeekWindowManager.WidthPolicy = .fixed,
                              content: AnyView) {
-        let anchor = levels[level - 1].rowFrames[parentIndex] ?? .zero
         peekManager.present(atLevel: level,
                             anchor: anchor,
                             size: size,
                             widthPolicy: widthPolicy,
                             content: content)
+    }
+
+    private func parentAnchor(forLevel level: Int, parentIndex: Int) -> NSRect? {
+        guard levels.indices.contains(level - 1),
+              let anchor = levels[level - 1].rowFrames[parentIndex],
+              !anchor.isEmpty else { return nil }
+        return anchor
     }
 
     private func scheduleClose(deeperThan level: Int) {
@@ -740,7 +802,7 @@ final class CascadeModel: ObservableObject {
     }
 
     func closeAll() {
-        pendingOpen?.cancel(); pendingOpen = nil
+        cancelPendingOpen()
         pendingClose?.cancel(); pendingClose = nil
         closePeeks(atLevelsGreaterThan: 0)
         focus = Focus(level: 0, index: -1)

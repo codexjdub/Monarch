@@ -10,6 +10,7 @@ final class FrequentStore {
     private enum Ranking {
         static let minimumAccessCount = 2
         static let decayHalfLifeDays = 21.0
+        static let maxStoredRecords = 500
     }
 
     static let shared = FrequentStore()
@@ -28,22 +29,25 @@ final class FrequentStore {
               let decoded = try? JSONDecoder().decode([String: FrequentRecord].self, from: data)
         else { return }
         records = decoded
+        if records.count > Ranking.maxStoredRecords {
+            capRecords(at: .now)
+            save(notify: false)
+        }
     }
 
     func recordAccess(_ url: URL, at date: Date = .now) {
         let path = url.path
-        guard !path.isEmpty,
-              FileManager.default.fileExists(atPath: path) else { return }
+        guard !path.isEmpty else { return }
         var record = records[path] ?? FrequentRecord(accessCount: 0, lastAccessedAt: date)
         record.accessCount += 1
         record.lastAccessedAt = date
         records[path] = record
+        capRecords(at: date)
         save(notify: true)
     }
 
     func topItems(within roots: [URL], excluding excludedPaths: Set<String>, limit: Int) -> [URL] {
         guard !roots.isEmpty, limit > 0 else { return [] }
-        pruneMissingEntries()
 
         let now = Date()
         let sortedPaths = records
@@ -67,10 +71,10 @@ final class FrequentStore {
                 }
                 return lhs.key.localizedCaseInsensitiveCompare(rhs.key) == .orderedAscending
             }
-            .prefix(limit)
             .map(\.key)
 
-        return sortedPaths.map { URL(fileURLWithPath: $0) }
+        return validatedTopPaths(from: sortedPaths, limit: limit)
+            .map { URL(fileURLWithPath: $0) }
     }
 
     func clear() {
@@ -106,23 +110,52 @@ final class FrequentStore {
         if notify { onChanged?() }
     }
 
-    private func pruneMissingEntries() {
-        let existingPaths = records.keys.filter { FileManager.default.fileExists(atPath: $0) }
-        let staleHidden = hiddenPaths.filter { !FileManager.default.fileExists(atPath: $0) }
-        if !staleHidden.isEmpty {
-            hiddenPaths.subtract(staleHidden)
-            UserDefaults.standard.set(Array(hiddenPaths).sorted(), forKey: hiddenKey)
+    private func validatedTopPaths(from sortedPaths: [String], limit: Int) -> [String] {
+        var result: [String] = []
+        var stalePaths: [String] = []
+        let validationBudget = max(limit + 8, limit * 4)
+
+        for path in sortedPaths.prefix(validationBudget) {
+            if FileManager.default.fileExists(atPath: path) {
+                result.append(path)
+                if result.count == limit { break }
+            } else {
+                stalePaths.append(path)
+            }
         }
-        guard existingPaths.count != records.count else { return }
-        let existingSet = Set(existingPaths)
-        records = records.filter { existingSet.contains($0.key) }
-        save(notify: false)
+
+        if !stalePaths.isEmpty {
+            for path in stalePaths {
+                records.removeValue(forKey: path)
+            }
+            save(notify: false)
+        }
+
+        return result
     }
 
     private func decayedScore(for record: FrequentRecord, at now: Date) -> Double {
         let ageDays = max(0, now.timeIntervalSince(record.lastAccessedAt)) / 86_400
         let decay = pow(0.5, ageDays / Ranking.decayHalfLifeDays)
         return Double(record.accessCount) * decay
+    }
+
+    private func capRecords(at date: Date) {
+        guard records.count > Ranking.maxStoredRecords else { return }
+        let kept = records
+            .sorted { lhs, rhs in
+                let lhsScore = decayedScore(for: lhs.value, at: date)
+                let rhsScore = decayedScore(for: rhs.value, at: date)
+                if lhsScore != rhsScore {
+                    return lhsScore > rhsScore
+                }
+                if lhs.value.lastAccessedAt != rhs.value.lastAccessedAt {
+                    return lhs.value.lastAccessedAt > rhs.value.lastAccessedAt
+                }
+                return lhs.key.localizedCaseInsensitiveCompare(rhs.key) == .orderedAscending
+            }
+            .prefix(Ranking.maxStoredRecords)
+        records = Dictionary(uniqueKeysWithValues: kept.map { ($0.key, $0.value) })
     }
 
     private func isWithinRoots(_ path: String, roots: [URL]) -> Bool {
