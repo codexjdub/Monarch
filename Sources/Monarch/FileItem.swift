@@ -36,6 +36,20 @@ private let textExts: Set<String> = [
     "env", "gitignore", "gitconfig", "dockerignore",
     "srt", "vtt"
 ]
+private let textFileNames: Set<String> = [
+    ".bash_login", ".bash_profile", ".bashrc",
+    ".curlrc", ".dockerignore", ".editorconfig", ".env",
+    ".gitattributes", ".gitconfig", ".gitignore", ".gitmodules",
+    ".hushlogin", ".ideavimrc", ".inputrc", ".node-version",
+    ".npmrc", ".nvmrc", ".profile", ".python-version",
+    ".ruby-version", ".tool-versions", ".vimrc", ".wgetrc",
+    ".yarnrc", ".zprofile", ".zshenv", ".zshrc",
+    "brewfile", "dockerfile", "gemfile", "makefile", "podfile",
+    "rakefile"
+]
+private func isTextFileName(_ fileName: String) -> Bool {
+    textFileNames.contains(fileName) || fileName.hasPrefix(".env.")
+}
 private let quicklookExts: Set<String> = [
     // Office Open XML
     "docx", "xlsx", "pptx",
@@ -136,7 +150,12 @@ struct FileItem: Identifiable, Hashable {
 
         // previewKind — pure string comparisons, but depends on isDirectory.
         let ext = url.pathExtension.lowercased()
-        if isDir || ext.isEmpty {
+        let fileName = url.lastPathComponent.lowercased()
+        if isDir {
+            self.previewKind = nil
+        } else if isTextFileName(fileName) {
+            self.previewKind = .text
+        } else if ext.isEmpty {
             self.previewKind = nil
         } else if imageExts.contains(ext)     { self.previewKind = .image }
         else if ext == "pdf"                   { self.previewKind = .pdf }
