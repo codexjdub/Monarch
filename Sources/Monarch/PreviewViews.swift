@@ -59,7 +59,7 @@ struct PreviewLevelView: View {
         switch kind {
         case .image:     ImagePreviewView(url: url)
         case .pdf:       PDFPreviewView(url: url)
-        case .markdown:  MarkdownPreviewView(url: url)
+        case .markdown:  TextPreviewView(url: url, syntaxHint: .markdown)
         case .text:      TextPreviewView(url: url)
         case .quicklook: QuickLookPreviewView(url: url)
         case .video:     QuickLookPreviewView(url: url)
@@ -120,10 +120,21 @@ struct PDFPreviewView: NSViewRepresentable {
 
 struct TextPreviewView: NSViewRepresentable {
     let url: URL
+    var syntaxHint: SyntaxKind? = nil
 
     /// Maximum bytes loaded into the preview pane. Large files are truncated
     /// at this boundary to keep the NSTextView responsive.
     nonisolated static let previewMaxBytes = 1_000_000
+
+    final class Coordinator: @unchecked Sendable {
+        var requestedURL: URL?
+        var requestedSyntaxHint: SyntaxKind?
+        var generation = 0
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
 
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSScrollView()
@@ -137,7 +148,8 @@ struct TextPreviewView: NSViewRepresentable {
         let tv = NSTextView()
         tv.isEditable = false
         tv.isSelectable = true
-        tv.isRichText = false
+        tv.isRichText = true
+        tv.importsGraphics = false
         tv.drawsBackground = true
         tv.backgroundColor = NSColor.windowBackgroundColor
         tv.textContainerInset = NSSize(width: 8, height: 8)
@@ -163,21 +175,33 @@ struct TextPreviewView: NSViewRepresentable {
         }
 
         scroll.documentView = tv
-        loadAsync(into: tv)
+        reloadIfNeeded(scroll, coordinator: context.coordinator, force: true)
         return scroll
     }
 
     func updateNSView(_ nsView: NSScrollView, context: Context) {
-        // URL is captured at make-time; previews aren't reused across URLs
-        // (a new peek replaces the old one), so no update needed.
+        reloadIfNeeded(nsView, coordinator: context.coordinator)
     }
 
-    private func loadAsync(into tv: NSTextView) {
-        let fileURL = url
+    private func reloadIfNeeded(_ scroll: NSScrollView, coordinator: Coordinator, force: Bool = false) {
+        guard force || coordinator.requestedURL != url || coordinator.requestedSyntaxHint != syntaxHint else { return }
+        guard let tv = scroll.documentView as? NSTextView else { return }
+
+        coordinator.requestedURL = url
+        coordinator.requestedSyntaxHint = syntaxHint
+        coordinator.generation &+= 1
+        let generation = coordinator.generation
+        let fileURL = self.url
+        let kind = self.syntaxHint
+        tv.string = "Loading…"
         DispatchQueue.global(qos: .userInitiated).async {
             let s = Self.readTruncated(url: fileURL, maxBytes: Self.previewMaxBytes)
-            DispatchQueue.main.async {
-                tv.string = s
+            let highlighted = SyntaxHighlighter.highlight(s, url: fileURL, hint: kind)
+            DispatchQueue.main.async { [weak coordinator, weak tv] in
+                guard let coordinator,
+                      coordinator.generation == generation,
+                      coordinator.requestedURL == fileURL else { return }
+                tv?.textStorage?.setAttributedString(highlighted)
             }
         }
     }
@@ -198,6 +222,221 @@ struct TextPreviewView: NSViewRepresentable {
         }
         return s
     }
+}
+
+// MARK: - Syntax highlighting
+
+enum SyntaxKind: Equatable {
+    case markdown
+    case html
+    case css
+    case json
+    case yaml
+    case shell
+    case python
+    case ruby
+    case swift
+    case sql
+    case cLike
+    case plain
+
+    static func infer(url: URL) -> SyntaxKind {
+        let ext = url.pathExtension.lowercased()
+        let name = url.lastPathComponent.lowercased()
+        switch ext {
+        case "md", "markdown", "mdown": return .markdown
+        case "html", "htm", "xml", "plist", "entitlements": return .html
+        case "css", "scss", "sass": return .css
+        case "json", "ipynb": return .json
+        case "yaml", "yml", "toml", "ini", "conf", "cfg": return .yaml
+        case "sh", "bash", "zsh", "fish": return .shell
+        case "py": return .python
+        case "rb": return .ruby
+        case "swift": return .swift
+        case "sql": return .sql
+        case "c", "h", "cpp", "hpp", "cc", "m", "mm", "js", "mjs", "cjs", "ts", "tsx", "jsx",
+             "go", "rs", "java", "kt", "kts", "scala", "pl", "lua", "php": return .cLike
+        default:
+            if name == "makefile" || name == "dockerfile" || name == "gemfile" || name == "rakefile" || name == "podfile" {
+                return .shell
+            }
+            if name.hasPrefix(".env") || name == ".gitignore" || name == ".dockerignore" || name == ".npmrc" {
+                return .yaml
+            }
+            return .plain
+        }
+    }
+}
+
+private enum SyntaxHighlighter {
+    private static var baseFont: NSFont { NSFont.monospacedSystemFont(ofSize: 12, weight: .regular) }
+    private static var boldFont: NSFont { NSFont.monospacedSystemFont(ofSize: 12, weight: .semibold) }
+    private static var commentColor: NSColor { NSColor.secondaryLabelColor }
+    private static var keywordColor: NSColor { NSColor.systemPurple }
+    private static var stringColor: NSColor { NSColor.systemGreen }
+    private static var numberColor: NSColor { NSColor.systemOrange }
+    private static var typeColor: NSColor { NSColor.systemTeal }
+    private static var keyColor: NSColor { NSColor.systemBlue }
+    private static var punctuationColor: NSColor { NSColor.tertiaryLabelColor }
+    private static var markdownColor: NSColor { NSColor.controlAccentColor }
+
+    static func highlight(_ text: String, url: URL, hint: SyntaxKind?) -> NSAttributedString {
+        let kind = hint ?? SyntaxKind.infer(url: url)
+        let ns = text as NSString
+        let full = NSRange(location: 0, length: ns.length)
+        let attributed = NSMutableAttributedString(
+            string: text,
+            attributes: [
+                .font: baseFont,
+                .foregroundColor: NSColor.labelColor
+            ]
+        )
+
+        switch kind {
+        case .markdown:
+            highlightMarkdown(attributed, full: full)
+        case .html:
+            highlightHTML(attributed, full: full)
+        case .css:
+            highlightCSS(attributed, full: full)
+        case .json:
+            highlightJSON(attributed, full: full)
+        case .yaml:
+            highlightYAML(attributed, full: full)
+        case .shell:
+            highlightGeneralCode(attributed, full: full, keywords: shellKeywords, hashComments: true)
+        case .python:
+            highlightGeneralCode(attributed, full: full, keywords: pythonKeywords, hashComments: true)
+        case .ruby:
+            highlightGeneralCode(attributed, full: full, keywords: rubyKeywords, hashComments: true)
+        case .swift:
+            highlightGeneralCode(attributed, full: full, keywords: swiftKeywords, slashComments: true)
+        case .sql:
+            highlightGeneralCode(attributed, full: full, keywords: sqlKeywords, dashComments: true)
+        case .cLike:
+            highlightGeneralCode(attributed, full: full, keywords: cLikeKeywords, slashComments: true)
+        case .plain:
+            break
+        }
+
+        return attributed
+    }
+
+    private static func apply(_ pattern: String,
+                              to attributed: NSMutableAttributedString,
+                              full: NSRange,
+                              color: NSColor,
+                              font: NSFont? = nil,
+                              options: NSRegularExpression.Options = []) {
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: options) else { return }
+        var attrs: [NSAttributedString.Key: Any] = [.foregroundColor: color]
+        if let font { attrs[.font] = font }
+        regex.enumerateMatches(in: attributed.string, options: [], range: full) { match, _, _ in
+            guard let range = match?.range, range.location != NSNotFound else { return }
+            attributed.addAttributes(attrs, range: range)
+        }
+    }
+
+    private static func wordPattern(_ words: Set<String>) -> String {
+        #"\b("# + words.sorted().map(NSRegularExpression.escapedPattern(for:)).joined(separator: "|") + #")\b"#
+    }
+
+    private static func highlightGeneralCode(_ attributed: NSMutableAttributedString,
+                                             full: NSRange,
+                                             keywords: Set<String>,
+                                             slashComments: Bool = false,
+                                             hashComments: Bool = false,
+                                             dashComments: Bool = false) {
+        apply(wordPattern(keywords), to: attributed, full: full, color: keywordColor, font: boldFont)
+        apply(#"\b(?:0x[0-9A-Fa-f]+|\d+(?:\.\d+)?)\b"#, to: attributed, full: full, color: numberColor)
+        apply(#""(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`"#, to: attributed, full: full, color: stringColor)
+        if slashComments {
+            apply(#"/\*[\s\S]*?\*/"#, to: attributed, full: full, color: commentColor)
+            apply(#"//.*$"#, to: attributed, full: full, color: commentColor, options: [.anchorsMatchLines])
+        }
+        if hashComments {
+            apply(#"(?<!\\)#.*$"#, to: attributed, full: full, color: commentColor, options: [.anchorsMatchLines])
+        }
+        if dashComments {
+            apply(#"--.*$"#, to: attributed, full: full, color: commentColor, options: [.anchorsMatchLines])
+        }
+    }
+
+    private static func highlightMarkdown(_ attributed: NSMutableAttributedString, full: NSRange) {
+        apply(#"^#{1,6}\s.*$"#, to: attributed, full: full, color: markdownColor, font: boldFont, options: [.anchorsMatchLines])
+        apply(#"^>\s.*$"#, to: attributed, full: full, color: commentColor, options: [.anchorsMatchLines])
+        apply(#"^\s*(```|~~~).*$"#, to: attributed, full: full, color: punctuationColor, font: boldFont, options: [.anchorsMatchLines])
+        apply(#"`[^`\n]+`"#, to: attributed, full: full, color: stringColor)
+        apply(#"\[[^\]\n]+\]\([^)]+\)"#, to: attributed, full: full, color: keyColor)
+        apply(#"^\s*(?:[-*+]|\d+\.)\s+"#, to: attributed, full: full, color: punctuationColor, font: boldFont, options: [.anchorsMatchLines])
+        apply(#"\*\*[^*\n]+\*\*|__[^_\n]+__"#, to: attributed, full: full, color: typeColor, font: boldFont)
+    }
+
+    private static func highlightHTML(_ attributed: NSMutableAttributedString, full: NSRange) {
+        apply(#"</?[A-Za-z][\w:.-]*"#, to: attributed, full: full, color: keywordColor, font: boldFont)
+        apply(#"\b[A-Za-z_:][\w:.-]*(?=\=)"#, to: attributed, full: full, color: keyColor)
+        apply(#""(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'"#, to: attributed, full: full, color: stringColor)
+        apply(#"<!--[\s\S]*?-->"#, to: attributed, full: full, color: commentColor)
+    }
+
+    private static func highlightCSS(_ attributed: NSMutableAttributedString, full: NSRange) {
+        apply(#"\b[A-Za-z-]+(?=\s*:)"#, to: attributed, full: full, color: keyColor)
+        apply(#"#[0-9A-Fa-f]{3,8}\b"#, to: attributed, full: full, color: numberColor)
+        apply(#""(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'"#, to: attributed, full: full, color: stringColor)
+        apply(#"/\*[\s\S]*?\*/"#, to: attributed, full: full, color: commentColor)
+    }
+
+    private static func highlightJSON(_ attributed: NSMutableAttributedString, full: NSRange) {
+        apply(#""(?:\\.|[^"\\])*""#, to: attributed, full: full, color: stringColor)
+        apply(#""(?:\\.|[^"\\])*"(?=\s*:)"#, to: attributed, full: full, color: keyColor, font: boldFont)
+        apply(#"\b(?:true|false|null)\b"#, to: attributed, full: full, color: keywordColor, font: boldFont)
+        apply(#"\b-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b"#, to: attributed, full: full, color: numberColor)
+    }
+
+    private static func highlightYAML(_ attributed: NSMutableAttributedString, full: NSRange) {
+        apply(#"^\s*[A-Za-z0-9_.-]+(?=\s*:)"#, to: attributed, full: full, color: keyColor, font: boldFont, options: [.anchorsMatchLines])
+        apply(#""(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'"#, to: attributed, full: full, color: stringColor)
+        apply(#"\b(?:true|false|null|yes|no|on|off)\b"#, to: attributed, full: full, color: keywordColor)
+        apply(#"\b-?\d+(?:\.\d+)?\b"#, to: attributed, full: full, color: numberColor)
+        apply(#"#.*$"#, to: attributed, full: full, color: commentColor, options: [.anchorsMatchLines])
+    }
+
+    private static let swiftKeywords: Set<String> = [
+        "actor", "any", "as", "associatedtype", "async", "await", "break", "case", "catch", "class",
+        "continue", "default", "defer", "do", "else", "enum", "extension", "false", "for", "func",
+        "guard", "if", "import", "in", "init", "inout", "is", "let", "nil", "private", "protocol",
+        "public", "return", "self", "static", "struct", "switch", "throw", "throws", "true", "try",
+        "var", "where", "while"
+    ]
+    private static let cLikeKeywords: Set<String> = [
+        "abstract", "async", "await", "break", "case", "catch", "class", "const", "continue", "default",
+        "defer", "do", "else", "enum", "export", "extends", "false", "final", "for", "func", "function",
+        "if", "import", "interface", "let", "new", "nil", "null", "package", "private", "protected",
+        "public", "return", "static", "struct", "switch", "this", "throw", "throws", "true", "try",
+        "type", "var", "void", "while"
+    ]
+    private static let pythonKeywords: Set<String> = [
+        "and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del", "elif",
+        "else", "except", "false", "finally", "for", "from", "global", "if", "import", "in", "is",
+        "lambda", "none", "nonlocal", "not", "or", "pass", "raise", "return", "true", "try", "while",
+        "with", "yield"
+    ]
+    private static let rubyKeywords: Set<String> = [
+        "BEGIN", "END", "alias", "and", "begin", "break", "case", "class", "def", "defined", "do",
+        "else", "elsif", "end", "ensure", "false", "for", "if", "in", "module", "next", "nil", "not",
+        "or", "redo", "rescue", "retry", "return", "self", "super", "then", "true", "undef", "unless",
+        "until", "when", "while", "yield"
+    ]
+    private static let shellKeywords: Set<String> = [
+        "case", "do", "done", "elif", "else", "esac", "export", "fi", "for", "function", "if", "in",
+        "local", "readonly", "return", "select", "set", "then", "trap", "unset", "until", "while"
+    ]
+    private static let sqlKeywords: Set<String> = [
+        "alter", "and", "as", "asc", "between", "by", "case", "create", "delete", "desc", "distinct",
+        "drop", "else", "end", "false", "from", "group", "having", "in", "insert", "into", "is",
+        "join", "left", "like", "limit", "not", "null", "on", "or", "order", "outer", "right",
+        "select", "set", "table", "then", "true", "union", "update", "values", "when", "where"
+    ]
 }
 
 // MARK: - QuickLook (rich documents)
@@ -226,52 +465,6 @@ struct QuickLookPreviewView: NSViewRepresentable {
 
     static func dismantleNSView(_ nsView: QLPreviewView, coordinator: ()) {
         nsView.close()
-    }
-}
-
-// MARK: - Markdown
-
-struct MarkdownPreviewView: View {
-    let url: URL
-    @State private var content: AttributedString = .init()
-    @State private var isLoading = true
-
-    var body: some View {
-        ScrollView {
-            if isLoading {
-                ProgressView()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .padding(.top, 40)
-            } else {
-                Text(content)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(16)
-            }
-        }
-        .background(Color(NSColor.windowBackgroundColor))
-        .onAppear(perform: load)
-    }
-
-    private func load() {
-        let fileURL = url
-        Task.detached(priority: .userInitiated) {
-            let raw = (try? String(contentsOf: fileURL, encoding: .utf8))
-                   ?? (try? String(contentsOf: fileURL, encoding: .isoLatin1))
-                   ?? ""
-            let attributed = (try? AttributedString(
-                markdown: raw,
-                options: .init(
-                    allowsExtendedAttributes: true,
-                    interpretedSyntax: .inlineOnlyPreservingWhitespace,
-                    failurePolicy: .returnPartiallyParsedIfPossible
-                )
-            )) ?? AttributedString(raw)
-            await MainActor.run {
-                self.content = attributed
-                self.isLoading = false
-            }
-        }
     }
 }
 
