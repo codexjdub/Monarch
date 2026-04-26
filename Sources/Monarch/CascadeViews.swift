@@ -311,10 +311,11 @@ struct LevelListBody: View {
     private var showFooter: Bool {
         UserDefaults.standard.object(forKey: UDKey.showFooterBar) as? Bool ?? true
     }
+    private var selectionCount: Int { selectionState.selectedURLs.count }
 
     // Whether the footer (and embedded grip) will be shown.
     private func willShowFooter(state: CascadeModel.Level) -> Bool {
-        showFooter && !state.items.isEmpty
+        selectionCount > 0 || (showFooter && !state.items.isEmpty)
     }
 
     var body: some View {
@@ -347,6 +348,15 @@ struct LevelListBody: View {
         }
         .background(Color.clear)
         .background(WindowMouseTracker(level: level, model: model))
+        .onReceive(selectionState.$selectedURLs) { urls in
+            model.setSelectedURLs(urls, forLevel: level)
+        }
+        .onChange(of: model.clearSelectionVersion) { _ in
+            selectionState.clear()
+        }
+        .onDisappear {
+            model.setSelectedURLs([], forLevel: level)
+        }
         .onChange(of: model.focusSearchLevel) { val in
             guard val == level else { return }
             model.focusSearchLevel = nil
@@ -434,6 +444,36 @@ struct LevelListBody: View {
     // MARK: - Footer bar
 
     @ViewBuilder private func footerView(state: CascadeModel.Level) -> some View {
+        if selectionCount > 0 {
+            selectionFooterView
+        } else {
+            defaultFooterView(state: state)
+        }
+    }
+
+    @ViewBuilder private var selectionFooterView: some View {
+        Divider()
+        HStack(spacing: 8) {
+            Text("\(selectionCount) selected")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+            Spacer()
+            Button("Clear Selection") {
+                selectionState.clear()
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            if let onBegan = onResizeBegan, let onDrag = onResizeDrag, let onEnded = onResizeEnded {
+                ResizeGripSwiftUI(onBegan: onBegan, onChanged: onDrag, onEnded: onEnded)
+                    .padding(.trailing, 8)
+            }
+        }
+        .padding(.leading, 12)
+        .padding(.vertical, 4)
+        .background(Color.clear)
+    }
+
+    @ViewBuilder private func defaultFooterView(state: CascadeModel.Level) -> some View {
         let totalCount = state.items.count
         let shownCount = displayIndices.count
         let label: String = {

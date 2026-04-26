@@ -38,6 +38,8 @@ final class CascadeModel: ObservableObject {
     @Published var searchVisible: [Int: Bool] = [:]
     @Published var focusSearchLevel: Int? = nil
     @Published private(set) var filterHighlightIndex: [Int: Int] = [:]
+    @Published private(set) var clearSelectionVersion: Int = 0
+    private var selectedURLsByLevel: [Int: Set<URL>] = [:]
 
     // Collaborators
     private let shortcutStore: ShortcutStore
@@ -242,6 +244,10 @@ final class CascadeModel: ObservableObject {
             guard let item = focusedVisibleItem(), !item.isDirectory else { return .handled }
             return .quickLook(item.url)
         case .escape:
+            if hasSelection {
+                clearSelections()
+                return .handled
+            }
             let level = focus.level
             if searchVisible[level] == true {
                 hideSearch(forLevel: level)
@@ -269,6 +275,24 @@ final class CascadeModel: ObservableObject {
               levels[f.level].items.indices.contains(f.index),
               isIndexVisible(f.index, forLevel: f.level) else { return nil }
         return levels[f.level].items[f.index]
+    }
+
+    func setSelectedURLs(_ urls: Set<URL>, forLevel level: Int) {
+        if urls.isEmpty {
+            selectedURLsByLevel.removeValue(forKey: level)
+        } else {
+            selectedURLsByLevel[level] = urls
+        }
+    }
+
+    private var hasSelection: Bool {
+        selectedURLsByLevel.values.contains { !$0.isEmpty }
+    }
+
+    private func clearSelections() {
+        guard hasSelection else { return }
+        selectedURLsByLevel.removeAll()
+        clearSelectionVersion &+= 1
     }
 
     // MARK: - Init

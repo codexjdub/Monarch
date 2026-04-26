@@ -297,7 +297,7 @@ extension DraggableNSView /* Context Menu */ {
         let menu = NSMenu()
         switch contextMenuKind(for: item, urlsToAct: urlsToAct) {
         case .multiSelection:
-            appendSection(to: menu) { self.addOpenItems(to: menu, item: item, urlsToAct: urlsToAct, includeQuickLook: false, includeFinderAndAppActions: false) }
+            appendSection(to: menu) { self.addOpenItems(to: menu, item: item, urlsToAct: urlsToAct, includeFinderAndAppActions: false) }
             appendSection(to: menu) { self.addCopyAndShareItems(to: menu, item: item, urlsToAct: urlsToAct) }
             appendSection(to: menu) { self.addTrashItem(to: menu, urlsToAct: urlsToAct) }
         case .rootShortcut:
@@ -349,8 +349,16 @@ extension DraggableNSView /* Context Menu */ {
         let openTitle = urlsToAct.count > 1 ? "Open \(urlsToAct.count) Items" : "Open"
         menu.addItem(withTitle: openTitle, action: #selector(openFiles), keyEquivalent: "").target = self
 
-        if includeQuickLook, urlsToAct.count == 1, !item.isDirectory {
-            menu.addItem(withTitle: "Quick Look", action: #selector(showQuickLook), keyEquivalent: " ").target = self
+        if includeQuickLook {
+            let previewableCount = urlsToAct.filter { !isDirectoryURL($0) }.count
+            if previewableCount == 1, urlsToAct.count == 1, !item.isDirectory {
+                menu.addItem(withTitle: "Quick Look", action: #selector(showQuickLook), keyEquivalent: " ").target = self
+            } else if previewableCount > 0, urlsToAct.count > 1 {
+                let title = previewableCount == urlsToAct.count
+                    ? "Quick Look \(urlsToAct.count) Items"
+                    : "Quick Look \(previewableCount) Files"
+                menu.addItem(withTitle: title, action: #selector(showQuickLook), keyEquivalent: " ").target = self
+            }
         }
 
         guard includeFinderAndAppActions, urlsToAct.count == 1 else { return }
@@ -369,7 +377,8 @@ extension DraggableNSView /* Context Menu */ {
     private func addCopyAndShareItems(to menu: NSMenu, item: FileItem, urlsToAct: [URL]) {
         let copyTitle = urlsToAct.count > 1 ? "Copy \(urlsToAct.count) Items" : "Copy"
         menu.addItem(withTitle: copyTitle, action: #selector(copyFiles), keyEquivalent: "").target = self
-        menu.addItem(withTitle: "Copy Path", action: #selector(copyPath), keyEquivalent: "").target = self
+        let copyPathTitle = urlsToAct.count > 1 ? "Copy Paths" : "Copy Path"
+        menu.addItem(withTitle: copyPathTitle, action: #selector(copyPath), keyEquivalent: "").target = self
         if urlsToAct.count == 1 {
             menu.addItem(withTitle: "Copy Name", action: #selector(copyName), keyEquivalent: "").target = self
         }
@@ -466,6 +475,14 @@ extension DraggableNSView /* Context Menu */ {
         }
         return menu
     }
+
+    private func isDirectoryURL(_ url: URL) -> Bool {
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) {
+            return isDirectory.boolValue
+        }
+        return url.hasDirectoryPath
+    }
 }
 
 // MARK: - Context menu actions
@@ -477,7 +494,7 @@ extension DraggableNSView /* Actions */ {
     private func currentActionURLs() -> [URL] {
         guard let item = fileItem else { return [] }
         if let sel = selectionState, sel.isSelected(item.url), sel.selectedURLs.count > 1 {
-            return Array(sel.selectedURLs)
+            return sel.selectedURLs.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
         }
         return [item.url]
     }
@@ -490,12 +507,7 @@ extension DraggableNSView /* Actions */ {
     }
 
     @objc private func openFiles() {
-        let urls: [URL] = {
-        if let sel = selectionState, sel.isSelected(fileItem?.url ?? URL(fileURLWithPath: "")), sel.selectedURLs.count > 1 {
-                return Array(sel.selectedURLs)
-            }
-            return [fileItem?.url].compactMap { $0 }
-        }()
+        let urls = currentActionURLs()
         for url in urls {
             FrequentStore.shared.recordAccess(url)
             NSWorkspace.shared.open(url)
@@ -503,8 +515,9 @@ extension DraggableNSView /* Actions */ {
     }
 
     @objc private func showQuickLook() {
-        guard let url = fileItem?.url, !url.hasDirectoryPath else { return }
-        QuickLookManager.shared.show(urls: [url])
+        let urls = currentActionURLs().filter { !isDirectoryURL($0) }
+        guard !urls.isEmpty else { return }
+        QuickLookManager.shared.show(urls: urls)
     }
 
     @objc private func showInFinder() {
@@ -528,9 +541,10 @@ extension DraggableNSView /* Actions */ {
     }
 
     @objc private func copyPath() {
-        guard let url = fileItem?.url else { return }
+        let urls = currentActionURLs()
+        guard !urls.isEmpty else { return }
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(url.path, forType: .string)
+        NSPasteboard.general.setString(urls.map(\.path).joined(separator: "\n"), forType: .string)
     }
 
     @objc private func copyName() {

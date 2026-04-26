@@ -41,7 +41,7 @@ This compiles a release build, assembles `Monarch.app`, codesigns it ad-hoc, kil
 | Return | Open highlighted item |
 | Space | Quick Look focused file |
 | ⌘F | Search / filter the current level |
-| Esc | Exit search first, then close peek / close Monarch |
+| Esc | Clear selection first, then exit search / close peek / close Monarch |
 | Drag file/folder onto menu bar icon | Add it to your shortcuts |
 | Drag file onto folder row | Move/copy into that folder |
 | Hold drag over folder (500ms) | Spring-load: peek opens mid-drag |
