@@ -491,7 +491,11 @@ final class CascadeModel: ObservableObject {
               case .folder = levels[level].content,
               levels[level].source == src else { return }
         let newItems = result.items
-        levels[level].setContents(result.items, result.sections, totalSize: result.totalSize, readError: result.readError)
+        levels[level].setContents(result.items,
+                                  result.sections,
+                                  totalSize: result.totalSize,
+                                  sourceModifiedAt: result.sourceModifiedAt,
+                                  readError: result.readError)
         updateFilterHighlight(forLevel: level)
 
         // Restore focus.
@@ -859,6 +863,7 @@ final class CascadeModel: ObservableObject {
                   self.levels[level].source == folder else { return }
             self.levels[level].setContents(result.items, result.sections,
                                            totalSize: result.totalSize,
+                                           sourceModifiedAt: result.sourceModifiedAt,
                                            readError: result.readError)
         }
     }

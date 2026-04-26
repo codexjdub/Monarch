@@ -74,9 +74,9 @@ struct FileRowContent: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
         } else {
-            let parts: [String?] = item.imageDimensions != nil
-                ? [item.fileSize, item.imageDimensions]
-                : (!item.isDirectory ? [item.fileSize] : [])
+            let parts: [String?] = item.isDirectory
+                ? []
+                : [item.fileSize, formatModifiedDate(item.contentModifiedAt), item.imageDimensions]
             let subtitle = parts.compactMap { $0 }.joined(separator: "  ·  ")
             if !subtitle.isEmpty {
                 Text(subtitle)
@@ -85,4 +85,24 @@ struct FileRowContent: View {
             }
         }
     }
+
+    private func formatModifiedDate(_ date: Date?) -> String? {
+        guard let date else { return nil }
+        let calendar = Calendar.current
+        if calendar.isDateInToday(date) {
+            return "Today"
+        }
+        if calendar.isDateInYesterday(date) {
+            return "Yesterday"
+        }
+        return Self.modifiedDateFormatter.string(from: date)
+    }
+
+    private static let modifiedDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        formatter.doesRelativeDateFormatting = false
+        return formatter
+    }()
 }

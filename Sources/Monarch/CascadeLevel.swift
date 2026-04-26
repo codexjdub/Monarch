@@ -55,16 +55,24 @@ extension CascadeModel {
         var content: Content
         /// Sum of direct-child file sizes (bytes). 0 for level 0 and preview levels.
         var totalSize: Int64
+        /// Modification date of the folder represented by this level.
+        var sourceModifiedAt: Date?
         /// True when the folder could not be read (e.g. permission denied).
         var readError: Bool
         /// True while an async load is in flight and no contents have arrived yet.
         /// Used by views to distinguish a genuinely empty folder from "still loading".
         var isLoading: Bool
 
-        init(source: URL?, content: Content, totalSize: Int64 = 0, readError: Bool = false, isLoading: Bool = false) {
+        init(source: URL?,
+             content: Content,
+             totalSize: Int64 = 0,
+             sourceModifiedAt: Date? = nil,
+             readError: Bool = false,
+             isLoading: Bool = false) {
             self.source = source
             self.content = content
             self.totalSize = totalSize
+            self.sourceModifiedAt = sourceModifiedAt
             self.readError = readError
             self.isLoading = isLoading
         }
@@ -85,11 +93,18 @@ extension CascadeModel {
         /// For .folder levels, swap in new items + sections and clear frame
         /// reports because they are index-based and belong to the old contents.
         /// Clears `isLoading` — by the time contents arrive, loading is done.
-        mutating func setContents(_ newItems: [FileItem], _ newSections: [Section], totalSize: Int64? = nil, readError: Bool = false) {
+        mutating func setContents(_ newItems: [FileItem],
+                                  _ newSections: [Section],
+                                  totalSize: Int64? = nil,
+                                  sourceModifiedAt: Date?? = nil,
+                                  readError: Bool = false) {
             if case .folder = content {
                 content = .folder(items: newItems, sections: newSections, rowFrames: [:])
             }
             if let totalSize { self.totalSize = totalSize }
+            if let sourceModifiedAtUpdate = sourceModifiedAt {
+                self.sourceModifiedAt = sourceModifiedAtUpdate
+            }
             self.readError = readError
             self.isLoading = false
         }
@@ -110,6 +125,7 @@ extension CascadeModel {
         let items: [FileItem]
         let sections: [Section]
         let totalSize: Int64
+        let sourceModifiedAt: Date?
         var readError: Bool = false
     }
 
@@ -125,13 +141,14 @@ extension CascadeModel {
         let fm = FileManager.default
         let keys: [URLResourceKey] = [.isDirectoryKey, .fileSizeKey,
                                       .contentModificationDateKey, .creationDateKey]
+        let sourceModifiedAt = (try? folder.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
         let contents: [URL]
         do {
             contents = try fm.contentsOfDirectory(at: folder,
                                                   includingPropertiesForKeys: keys,
                                                   options: [])
         } catch {
-            return FolderContents(items: [], sections: [], totalSize: 0, readError: true)
+            return FolderContents(items: [], sections: [], totalSize: 0, sourceModifiedAt: sourceModifiedAt, readError: true)
         }
 
         // Pre-fetch all file attributes in one pass so that sort comparators
@@ -223,7 +240,7 @@ extension CascadeModel {
 
         // No sections needed if there are no pins and no recent.
         if pinnedItems.isEmpty && recentItems.isEmpty {
-            return FolderContents(items: allSorted, sections: [], totalSize: totalSize)
+            return FolderContents(items: allSorted, sections: [], totalSize: totalSize, sourceModifiedAt: sourceModifiedAt)
         }
 
         // Compose flat item list and build section descriptors.
@@ -244,6 +261,6 @@ extension CascadeModel {
         items.append(contentsOf: remainingItems)
         sections.append(Section(title: "All", range: start..<items.count))
 
-        return FolderContents(items: items, sections: sections, totalSize: totalSize)
+        return FolderContents(items: items, sections: sections, totalSize: totalSize, sourceModifiedAt: sourceModifiedAt)
     }
 }

@@ -485,8 +485,14 @@ struct LevelListBody: View {
             }
             // Level 0 shows root folders only — skip size (not a real folder listing).
             if level == 0 { return countText }
-            guard state.totalSize > 0 else { return countText }
-            return "\(countText) · \(formatSize(state.totalSize))"
+            var parts = [countText]
+            if state.totalSize > 0 {
+                parts.append(formatSize(state.totalSize))
+            }
+            if let modified = state.sourceModifiedAt {
+                parts.append("Modified \(formatModifiedDate(modified))")
+            }
+            return parts.joined(separator: " · ")
         }()
 
         Divider()
@@ -515,6 +521,25 @@ struct LevelListBody: View {
     private func formatSize(_ bytes: Int64) -> String {
         Self.byteFormatter.string(fromByteCount: bytes)
     }
+
+    private func formatModifiedDate(_ date: Date) -> String {
+        let calendar = Calendar.current
+        if calendar.isDateInToday(date) {
+            return "today"
+        }
+        if calendar.isDateInYesterday(date) {
+            return "yesterday"
+        }
+        return Self.modifiedDateFormatter.string(from: date)
+    }
+
+    private static let modifiedDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        formatter.doesRelativeDateFormatting = false
+        return formatter
+    }()
 
     // MARK: - Scroll list
 

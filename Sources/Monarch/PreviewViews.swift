@@ -271,14 +271,14 @@ enum SyntaxKind: Equatable {
 private enum SyntaxHighlighter {
     private static var baseFont: NSFont { NSFont.monospacedSystemFont(ofSize: 12, weight: .regular) }
     private static var boldFont: NSFont { NSFont.monospacedSystemFont(ofSize: 12, weight: .semibold) }
-    private static var commentColor: NSColor { NSColor.secondaryLabelColor }
-    private static var keywordColor: NSColor { NSColor.systemPurple }
-    private static var stringColor: NSColor { NSColor.systemGreen }
-    private static var numberColor: NSColor { NSColor.systemOrange }
-    private static var typeColor: NSColor { NSColor.systemTeal }
-    private static var keyColor: NSColor { NSColor.systemBlue }
-    private static var punctuationColor: NSColor { NSColor.tertiaryLabelColor }
-    private static var markdownColor: NSColor { NSColor.controlAccentColor }
+    private static var commentColor: NSColor { NSColor.secondaryLabelColor.withAlphaComponent(0.82) }
+    private static var keywordColor: NSColor { NSColor.systemBlue.blended(withFraction: 0.22, of: .labelColor) ?? .systemBlue }
+    private static var stringColor: NSColor { NSColor.systemGreen.blended(withFraction: 0.28, of: .labelColor) ?? .systemGreen }
+    private static var numberColor: NSColor { NSColor.systemOrange.blended(withFraction: 0.24, of: .labelColor) ?? .systemOrange }
+    private static var typeColor: NSColor { NSColor.systemTeal.blended(withFraction: 0.30, of: .labelColor) ?? .systemTeal }
+    private static var keyColor: NSColor { NSColor.systemBlue.blended(withFraction: 0.12, of: .labelColor) ?? .systemBlue }
+    private static var punctuationColor: NSColor { NSColor.tertiaryLabelColor.withAlphaComponent(0.78) }
+    private static var markdownColor: NSColor { NSColor.controlAccentColor.blended(withFraction: 0.20, of: .labelColor) ?? .controlAccentColor }
 
     static func highlight(_ text: String, url: URL, hint: SyntaxKind?) -> NSAttributedString {
         let kind = hint ?? SyntaxKind.infer(url: url)
