@@ -59,6 +59,10 @@ extension CascadeModel {
         var sourceModifiedAt: Date?
         /// True when the folder could not be read (e.g. permission denied).
         var readError: Bool
+        /// Name of the volume hosting this level when that volume is no longer
+        /// mounted (e.g. external drive ejected). Used to show a friendlier
+        /// empty-state message than the generic "Can't read folder".
+        var unmountedVolumeName: String?
         /// True while an async load is in flight and no contents have arrived yet.
         /// Used by views to distinguish a genuinely empty folder from "still loading".
         var isLoading: Bool
@@ -68,12 +72,14 @@ extension CascadeModel {
              totalSize: Int64 = 0,
              sourceModifiedAt: Date? = nil,
              readError: Bool = false,
+             unmountedVolumeName: String? = nil,
              isLoading: Bool = false) {
             self.source = source
             self.content = content
             self.totalSize = totalSize
             self.sourceModifiedAt = sourceModifiedAt
             self.readError = readError
+            self.unmountedVolumeName = unmountedVolumeName
             self.isLoading = isLoading
         }
 
@@ -97,7 +103,8 @@ extension CascadeModel {
                                   _ newSections: [Section],
                                   totalSize: Int64? = nil,
                                   sourceModifiedAt: Date?? = nil,
-                                  readError: Bool = false) {
+                                  readError: Bool = false,
+                                  unmountedVolumeName: String? = nil) {
             if case .folder = content {
                 content = .folder(items: newItems, sections: newSections, rowFrames: [:])
             }
@@ -106,6 +113,7 @@ extension CascadeModel {
                 self.sourceModifiedAt = sourceModifiedAtUpdate
             }
             self.readError = readError
+            self.unmountedVolumeName = unmountedVolumeName
             self.isLoading = false
         }
         /// For .folder levels, record a row's screen frame.
@@ -127,6 +135,7 @@ extension CascadeModel {
         let totalSize: Int64
         let sourceModifiedAt: Date?
         var readError: Bool = false
+        var unmountedVolumeName: String? = nil
     }
 
     // MARK: - Folder loading
@@ -148,7 +157,10 @@ extension CascadeModel {
                                                   includingPropertiesForKeys: keys,
                                                   options: [])
         } catch {
-            return FolderContents(items: [], sections: [], totalSize: 0, sourceModifiedAt: sourceModifiedAt, readError: true)
+            return FolderContents(items: [], sections: [], totalSize: 0,
+                                  sourceModifiedAt: sourceModifiedAt,
+                                  readError: true,
+                                  unmountedVolumeName: folder.unmountedVolumeName)
         }
 
         // Pre-fetch all file attributes in one pass so that sort comparators

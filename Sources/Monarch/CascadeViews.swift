@@ -43,6 +43,9 @@ struct LevelListView: View {
     }
 
     private func emptyMessage(for state: CascadeModel.Level) -> String {
+        if let volumeName = state.unmountedVolumeName {
+            return "\"\(volumeName)\" is not mounted"
+        }
         if state.readError { return "Can't read folder" }
         if state.isLoading { return "Loading…" }
         return level == 0 ? "No folders yet" : "Empty folder"

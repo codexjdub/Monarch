@@ -47,6 +47,8 @@ final class CascadeModel: ObservableObject {
     private var storeSub: AnyCancellable?
     private var frequentSectionObserver: NSKeyValueObservation?
     private var frequentDisplayLimitObserver: NSKeyValueObservation?
+    private var volumeMountObserver: NSObjectProtocol?
+    private var volumeUnmountObserver: NSObjectProtocol?
     let onDismiss: () -> Void
 
     /// Called when "Remove from Monarch" is triggered on a root row.
@@ -320,6 +322,22 @@ final class CascadeModel: ObservableObject {
         PinStore.shared.onPinsChanged = { [weak self] folder in
             Task { @MainActor in self?.pinsChanged(folder: folder) }
         }
+
+        // Refresh open levels when a volume is mounted or unmounted so
+        // shortcuts and peeks pointing to external drives recover (or fail
+        // gracefully) without needing the user to reopen Monarch.
+        let nc = NSWorkspace.shared.notificationCenter
+        // Observer tokens are stored mainly to suppress unused-result warnings;
+        // CascadeModel lives for the lifetime of the app, and the closures use
+        // [weak self], so observer removal isn't required for correctness.
+        volumeMountObserver = nc.addObserver(forName: NSWorkspace.didMountNotification,
+                                             object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.reloadAll() }
+        }
+        volumeUnmountObserver = nc.addObserver(forName: NSWorkspace.didUnmountNotification,
+                                               object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.reloadAll() }
+        }
     }
 
     private func pinsChanged(folder: URL) {
@@ -495,7 +513,8 @@ final class CascadeModel: ObservableObject {
                                   result.sections,
                                   totalSize: result.totalSize,
                                   sourceModifiedAt: result.sourceModifiedAt,
-                                  readError: result.readError)
+                                  readError: result.readError,
+                                  unmountedVolumeName: result.unmountedVolumeName)
         updateFilterHighlight(forLevel: level)
 
         // Restore focus.
@@ -872,7 +891,8 @@ final class CascadeModel: ObservableObject {
             self.levels[level].setContents(result.items, result.sections,
                                            totalSize: result.totalSize,
                                            sourceModifiedAt: result.sourceModifiedAt,
-                                           readError: result.readError)
+                                           readError: result.readError,
+                                           unmountedVolumeName: result.unmountedVolumeName)
         }
     }
 

@@ -92,6 +92,35 @@ enum FileItemRole {
     case frequent
 }
 
+/// Where the file physically lives. Surfaced as a small trailing badge so
+/// users can tell at a glance whether a row is on iCloud Drive (potentially
+/// not downloaded), a network share (possibly slow / unavailable), or an
+/// external drive (might get unmounted). `nil` for ordinary local files.
+enum VolumeKind {
+    case iCloud
+    case network
+    case external
+}
+
+extension URL {
+    /// If this URL is on an external volume (`/Volumes/<name>/...`) and that
+    /// volume directory no longer exists in the filesystem, returns the
+    /// volume name. Used to distinguish "file deleted" from "drive ejected"
+    /// in error messages, since the user's recovery action is different
+    /// (re-locate vs. plug the drive back in).
+    var unmountedVolumeName: String? {
+        guard path.hasPrefix("/Volumes/") else { return nil }
+        let parts = path.components(separatedBy: "/")
+        guard parts.count >= 3, !parts[2].isEmpty else { return nil }
+        let volumeName = parts[2]
+        let volumeRoot = "/Volumes/" + volumeName
+        if FileManager.default.fileExists(atPath: volumeRoot) {
+            return nil
+        }
+        return volumeName
+    }
+}
+
 struct FileItem: Identifiable, Hashable {
     let id = UUID()
     let url: URL
@@ -119,6 +148,9 @@ struct FileItem: Identifiable, Hashable {
     /// component for thumbnail keys so edits invalidate automatically without
     /// re-stat'ing on every row render.
     let contentModifiedAt: Date?
+    /// Where the file physically lives — drives the trailing badge in the
+    /// row. `nil` for ordinary local files (no badge shown).
+    let volumeKind: VolumeKind?
 
     init(url: URL,
          role: FileItemRole = .standard,
@@ -130,11 +162,15 @@ struct FileItem: Identifiable, Hashable {
         self.displayNameOverride = trimmedDisplayName.isEmpty ? nil : trimmedDisplayName
         let trimmedSubtitle = subtitleOverride?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         self.subtitleOverride = trimmedSubtitle.isEmpty ? nil : trimmedSubtitle
-        // Batch-fetch isDirectory + fileSize + mtime in one syscall. A
-        // successful fetch implies the path is reachable, so `exists` is
-        // derived from the same call instead of paying for a separate
-        // FileManager.fileExists stat per item.
-        let resources = try? url.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey])
+        // Batch-fetch isDirectory + fileSize + mtime + volume metadata in one
+        // syscall. A successful fetch implies the path is reachable, so
+        // `exists` is derived from the same call instead of paying for a
+        // separate FileManager.fileExists stat per item. Volume keys piggyback
+        // on the same call so the trailing badge costs nothing extra.
+        let resources = try? url.resourceValues(forKeys: [
+            .isDirectoryKey, .fileSizeKey, .contentModificationDateKey,
+            .isUbiquitousItemKey, .volumeIsLocalKey, .volumeIsInternalKey
+        ])
         self.exists = resources != nil
         self.contentModifiedAt = resources?.contentModificationDate
         let isDir = resources?.isDirectory ?? false
@@ -143,6 +179,20 @@ struct FileItem: Identifiable, Hashable {
             self.fileSize = ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
         } else {
             self.fileSize = nil
+        }
+
+        // Derive volumeKind. Order matters: iCloud first (it's per-item, can
+        // live on local volumes too), then network (volumeIsLocal == false),
+        // then external (local but not internal). Anything else is plain
+        // local storage and gets no badge.
+        if resources?.isUbiquitousItem == true {
+            self.volumeKind = .iCloud
+        } else if resources?.volumeIsLocal == false {
+            self.volumeKind = .network
+        } else if resources?.volumeIsInternal == false {
+            self.volumeKind = .external
+        } else {
+            self.volumeKind = nil
         }
 
         // previewKind — pure string comparisons, but depends on isDirectory.

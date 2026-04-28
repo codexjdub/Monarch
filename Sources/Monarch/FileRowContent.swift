@@ -43,12 +43,22 @@ struct FileRowContent: View {
 
             Spacer()
 
+            volumeBadge
+
             if !item.exists {
-                // Broken-shortcut badge. Tooltip (NSView-level) could be added
-                // later; for now the visual is enough to signal "click me".
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: density.chevronSize + 1))
-                    .foregroundStyle(.orange)
+                // Broken-shortcut badge. Use an eject glyph when the item is
+                // on an unmounted external volume — that's a "remount the
+                // drive" situation, not a "file is gone" situation, and the
+                // softer secondary color matches the recoverable state.
+                if item.url.unmountedVolumeName != nil {
+                    Image(systemName: "eject")
+                        .font(.system(size: density.chevronSize + 1))
+                        .foregroundStyle(.secondary)
+                } else {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: density.chevronSize + 1))
+                        .foregroundStyle(.orange)
+                }
             } else if item.isDirectory {
                 Image(systemName: "chevron.right")
                     .font(.system(size: density.chevronSize))
@@ -64,9 +74,15 @@ struct FileRowContent: View {
     @ViewBuilder
     private var subtitleView: some View {
         if !item.exists {
-            Text("Missing — click to locate")
-                .font(.system(size: density.subtitleFontSize))
-                .foregroundStyle(.secondary)
+            if let volume = item.url.unmountedVolumeName {
+                Text("\"\(volume)\" is not mounted")
+                    .font(.system(size: density.subtitleFontSize))
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("Missing — click to locate")
+                    .font(.system(size: density.subtitleFontSize))
+                    .foregroundStyle(.secondary)
+            }
         } else if let subtitle = item.subtitleOverride {
             Text(subtitle)
                 .font(.system(size: density.subtitleFontSize))
@@ -83,6 +99,42 @@ struct FileRowContent: View {
                     .font(.system(size: density.subtitleFontSize))
                     .foregroundStyle(.secondary)
             }
+        }
+    }
+
+    /// Trailing badge showing where the file lives — iCloud, network share,
+    /// or external drive. Sized off `chevronSize` so it scales cleanly with
+    /// row density and never overwhelms small rows. Hidden for ordinary local
+    /// files to keep the row uncluttered.
+    @ViewBuilder
+    private var volumeBadge: some View {
+        if let kind = item.volumeKind {
+            Image(systemName: volumeBadgeSymbol(kind))
+                .font(.system(size: density.chevronSize + 1))
+                .foregroundStyle(volumeBadgeColor(kind))
+                .help(volumeBadgeLabel(kind))
+        }
+    }
+
+    private func volumeBadgeSymbol(_ kind: VolumeKind) -> String {
+        switch kind {
+        case .iCloud:   return "icloud"
+        case .network:  return "network"
+        case .external: return "externaldrive"
+        }
+    }
+
+    private func volumeBadgeColor(_ kind: VolumeKind) -> Color {
+        // All three badges use secondary gray for a consistent, quiet look —
+        // the symbol shape alone communicates which kind of volume it is.
+        .secondary
+    }
+
+    private func volumeBadgeLabel(_ kind: VolumeKind) -> String {
+        switch kind {
+        case .iCloud:   return "iCloud Drive"
+        case .network:  return "Network volume"
+        case .external: return "External drive"
         }
     }
 
