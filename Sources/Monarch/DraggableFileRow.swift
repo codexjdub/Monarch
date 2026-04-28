@@ -218,6 +218,7 @@ extension DraggableNSView /* Drop Target */ {
         guard let (urls, dest) = acceptableDrop(sender) else { return false }
         let op = FileDropHelper.preferredOperation(sources: urls, dest: dest)
         isDropTarget = false
+        flashDropAccepted()
 
         // Run copy/move work off-main so large or cross-volume drops don't
         // freeze the popover. The drag system needs a synchronous Bool here,
@@ -250,6 +251,22 @@ extension DraggableNSView /* Drop Target */ {
         NSColor.controlAccentColor.withAlphaComponent(0.7).setStroke()
         path.lineWidth = 1.5
         path.stroke()
+    }
+
+    /// Brief accent-color flash on the row's backing layer to confirm a drop
+    /// was accepted. Distinct from the drop-target highlight (which only
+    /// shows during hover) so the user gets a clear "received it" signal even
+    /// after they've released the drag.
+    private func flashDropAccepted() {
+        wantsLayer = true
+        guard let layer else { return }
+        let accent = NSColor.controlAccentColor.withAlphaComponent(0.45).cgColor
+        let pulse = CABasicAnimation(keyPath: "backgroundColor")
+        pulse.fromValue = accent
+        pulse.toValue = NSColor.clear.cgColor
+        pulse.duration = 0.40
+        pulse.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        layer.add(pulse, forKey: "dropAcceptedFlash")
     }
 
     // MARK: Spring-load
