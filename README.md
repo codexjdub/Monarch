@@ -6,6 +6,8 @@
 
 A native macOS menu bar app for cascading folder navigation. Click the menu bar icon to see your configured shortcuts (folders or files). Hover any folder to peek inside — another peek opens beside it. Keep hovering to drill deeper. Click a file to open it; click a folder to reveal it in Finder.
 
+Hover a file to preview it inline: images, PDFs, syntax-highlighted source code and text files, archive contents, and more. Use the **↗** button in the preview header to open the file in its default app.
+
 Peek placement adapts near screen edges, so the cascade can flip or clamp intelligently instead of blindly extending to the right.
 
 Root shortcuts can also have a custom display name inside Monarch without renaming the file or folder on disk. When a display name is set, Monarch shows the shortcut's path as the subtitle.
@@ -33,6 +35,8 @@ This compiles a release build, assembles `Monarch.app`, codesigns it ad-hoc, kil
 |---|---|
 | Click menu bar icon | Open Monarch |
 | Hover a folder row | Open peek window |
+| Hover a file | Open inline preview (image, PDF, text, archive…) |
+| Click **↗** in preview header | Open the previewed file |
 | Click a file | Open the file |
 | Click a folder | Reveal in Finder |
 | ↑ / ↓ | Move highlighted row |

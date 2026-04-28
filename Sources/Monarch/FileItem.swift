@@ -106,7 +106,6 @@ struct FileItem: Identifiable, Hashable {
 
     // Cached at init — these involve filesystem or image-header reads that
     // would otherwise repeat on every row render.
-    let icon: NSImage
     let isDirectory: Bool
     let fileSize: String?
     let previewKind: PreviewKind?
@@ -131,8 +130,6 @@ struct FileItem: Identifiable, Hashable {
         self.displayNameOverride = trimmedDisplayName.isEmpty ? nil : trimmedDisplayName
         let trimmedSubtitle = subtitleOverride?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         self.subtitleOverride = trimmedSubtitle.isEmpty ? nil : trimmedSubtitle
-        self.icon = NSWorkspace.shared.icon(forFile: url.path)
-
         // Batch-fetch isDirectory + fileSize + mtime in one syscall. A
         // successful fetch implies the path is reachable, so `exists` is
         // derived from the same call instead of paying for a separate
