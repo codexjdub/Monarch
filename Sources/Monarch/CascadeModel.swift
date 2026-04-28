@@ -791,6 +791,14 @@ final class CascadeModel: ObservableObject {
         onDismiss()
     }
 
+    /// Called from the preview window header "Open" button. Records access
+    /// (for Frequent ranking) and opens the file in its default app.
+    func openPreviewedFile(url: URL) {
+        frequentStore.recordAccess(url)
+        NSWorkspace.shared.open(url)
+        onDismiss()
+    }
+
     /// Present a "shortcut is missing" alert with Remove / Locate… / Cancel.
     /// Locate… opens NSOpenPanel; the chosen URL replaces the old one in the
     /// store (position preserved).

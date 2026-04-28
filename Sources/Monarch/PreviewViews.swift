@@ -37,6 +37,15 @@ struct PreviewLevelView: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer()
+            Button {
+                model.openPreviewedFile(url: url)
+            } label: {
+                Image(systemName: "arrow.up.forward")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.tertiary)
+            }
+            .buttonStyle(.plain)
+            .help("Open")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
