@@ -112,7 +112,7 @@ final class CascadeModel: ObservableObject {
     // Timing
     static let mouseOpenDelay:    TimeInterval = 0.12
     static let mouseReplaceDelay: TimeInterval = 0.06
-    static let mouseCloseDelay:   TimeInterval = 0.30
+    static let mouseCloseDelay:   TimeInterval = 0.45
 
     private struct PendingHoverTarget: Equatable {
         let level: Int
