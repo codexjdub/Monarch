@@ -82,20 +82,66 @@ struct PreviewLevelView: View {
 
 struct ImagePreviewView: View {
     let url: URL
+    @State private var image: NSImage?
+    @State private var loadFailed = false
+
+    /// Max dimension (pixels) the image is decoded to. Peek windows are
+    /// typically 600–800 pt; doubled for retina + headroom for resized peeks
+    /// gives ~2000 px. A 24MP source becomes ~3.2MP — much faster decode and
+    /// far less memory than `NSImage(contentsOf:)`, which decodes at full size.
+    private static let maxPixelSize = 2000
+
     var body: some View {
         Group {
-            if let img = NSImage(contentsOf: url) {
-                Image(nsImage: img)
+            if let image {
+                Image(nsImage: image)
                     .resizable()
                     .interpolation(.high)
                     .aspectRatio(contentMode: .fit)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
+            } else if loadFailed {
                 Text("Unable to load image").foregroundStyle(.secondary)
+            } else {
+                Color.clear
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(NSColor.windowBackgroundColor))
+        .task(id: url) {
+            // Reset for the new URL, then decode off-main at the display
+            // size. SwiftUI's .task(id:) cancels the previous task when url
+            // changes, and Task.isCancelled below drops stale results when
+            // the peek window is reused for a different file.
+            image = nil
+            loadFailed = false
+            let cg = await Self.loadDownsampledCG(url: url, maxPixelSize: Self.maxPixelSize)
+            guard !Task.isCancelled else { return }
+            if let cg {
+                image = NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
+            } else {
+                loadFailed = true
+            }
+        }
+    }
+
+    /// Decode the image at `maxPixelSize` instead of full resolution. Uses
+    /// `ImageIO`'s thumbnail API, which downsamples without ever decoding the
+    /// full bitmap into memory. EXIF orientation is honored.
+    ///
+    /// Returns `CGImage` rather than `NSImage` because `CGImage` is `Sendable`
+    /// on macOS 13; `NSImage` only became `Sendable` on macOS 14. The caller
+    /// wraps it on the main actor.
+    nonisolated private static func loadDownsampledCG(url: URL, maxPixelSize: Int) async -> CGImage? {
+        await Task.detached(priority: .userInitiated) {
+            let opts: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceShouldCacheImmediately: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+            ]
+            guard let src = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+            return CGImageSourceCreateThumbnailAtIndex(src, 0, opts as CFDictionary)
+        }.value
     }
 }
 
