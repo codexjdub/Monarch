@@ -5,8 +5,10 @@ set -e
 pkill -x Monarch 2>/dev/null || true
 
 echo "Building Monarch..."
-swift build -c release --arch arm64
-swift build -c release --arch x86_64
+# -Xswiftc -g keeps DWARF debug info in the per-arch binaries so dsymutil
+# can extract it into a .dSYM bundle below. Optimizations are unaffected.
+swift build -c release --arch arm64 -Xswiftc -g
+swift build -c release --arch x86_64 -Xswiftc -g
 lipo -create \
     .build/arm64-apple-macosx/release/Monarch \
     .build/x86_64-apple-macosx/release/Monarch \
@@ -29,6 +31,12 @@ printf "APPL????" > "$APP_DIR/PkgInfo"
 
 xattr -cr Monarch.app
 codesign --deep --force --sign - Monarch.app
+
+# Extract debug symbols into a sibling .dSYM bundle so future crash reports
+# from this build can be symbolicated. Kept locally only (gitignored); the
+# shipped .app does not include it.
+rm -rf Monarch.app.dSYM
+dsymutil "$APP_DIR/MacOS/Monarch" -o Monarch.app.dSYM 2>/dev/null || true
 
 echo "Done!"
 open Monarch.app
