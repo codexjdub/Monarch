@@ -4,30 +4,37 @@
 
 # Monarch
 
-A native macOS menu bar app for cascading folder navigation. Click the menu bar icon to see your configured shortcuts (folders or files). Hover any folder to peek inside — another peek opens beside it. Keep hovering to drill deeper. Click a file to open it; click a folder to reveal it in Finder.
+A native macOS menu bar app for **cascading folder navigation**. Click a folder to peek inside, hover deeper, click a file to open it — without ever leaving the keyboard or losing your place.
 
-Hover a file to preview it inline: images, PDFs, syntax-highlighted source code and text files, archive contents, and more. Use the **↗** button in the preview header to open the file in its default app.
+<!-- TODO: drop a screenshot/gif of a 3-level peek cascade here -->
 
-Peek placement adapts near screen edges, so the cascade can flip or clamp intelligently instead of blindly extending to the right.
+## Highlights
 
-Root shortcuts can also have a custom display name inside Monarch without renaming the file or folder on disk. When a display name is set, Monarch shows the shortcut's path as the subtitle.
+- **Cascading peeks.** Hover any folder to open a peek window beside it. Hover deeper for another. Placement adapts near screen edges so the cascade clamps or flips intelligently instead of running off the screen.
+- **Inline file preview.** Hover a file to preview it: images (downsampled for speed), PDFs, syntax-highlighted text & source code, archive contents, fonts, and more. The **↗** button in the preview header opens the file in its default app.
+- **Frequent + shortcuts.** Pin folders/files as root shortcuts (drag onto the menu bar icon to add). Monarch also surfaces a **Frequent** section at the top, ranked by your actual usage with a recency decay.
+- **Volume awareness.** Small badges show when an item is on iCloud Drive, a network share, or an external drive. When a volume gets ejected, Monarch shows a friendly "Volume not mounted" state instead of a generic error — and refreshes automatically when the drive comes back.
+- **Keyboard everything.** Global hotkey to open. Arrow keys, ⌘F to search, Space for Quick Look, Return to open, Esc to back out.
+- **Drag & drop.** Drag files between folders for Finder-style copy/move. Hold a drag over a folder for 500ms to spring-load into it.
+- **Custom display names.** Give a root shortcut a Monarch-only alias without renaming the file or folder on disk.
+- **Hover-open (optional).** If you prefer a launcher feel, Monarch can open when you hover the menu bar icon for a short delay.
 
-Monarch also keeps a level-0 **Frequent** section for the files and folders you actually open through Monarch. It defaults to 3 items, but you can change that in Preferences. Items must be opened at least twice before they appear, older usage decays over time, and anything already configured as a root shortcut is excluded so the same path never appears twice. You can also hide an individual item from Frequent from its context menu.
+## Install
 
-If you prefer a more hands-off launcher feel, Monarch can also optionally open when you hover the menu bar icon for a short delay.
+1. Download `Monarch-X.Y.zip` from the [latest release](https://github.com/codexjdub/Monarch/releases).
+2. Unzip and move `Monarch.app` to `/Applications`.
+3. Right-click → **Open** the first time (the build is ad-hoc signed, so macOS asks you to confirm).
+4. The Monarch icon appears in the menu bar — click it to start configuring shortcuts.
 
-## Requirements
+## Build from source
 
-- macOS 13+
-- Xcode Command Line Tools (`xcode-select --install`)
-
-## Build & run
+Requires macOS 13+ and Xcode Command Line Tools (`xcode-select --install`).
 
 ```bash
 bash build.sh
 ```
 
-This compiles a release build, assembles `Monarch.app`, codesigns it ad-hoc, kills any running instance, and relaunches the fresh binary.
+This compiles a universal release build, assembles `Monarch.app`, ad-hoc codesigns it, kills any running instance, and relaunches the fresh binary.
 
 ## Usage
 
@@ -50,7 +57,7 @@ This compiles a release build, assembles `Monarch.app`, codesigns it ad-hoc, kil
 | Drag file onto folder row | Move/copy into that folder |
 | Hold drag over folder (500ms) | Spring-load: peek opens mid-drag |
 | ⌘-click rows | Multi-select for bulk drag or open |
-| Right-click a row | Context menu (pin, rename, set display name for root shortcuts, add to Monarch, open in Terminal, copy path, share, trash…) |
+| Right-click a row | Context menu (pin, rename, set display name, add to Monarch, open in Terminal, copy path, share, trash…) |
 
 In search mode, `←` keeps its normal text-editing behavior in the search field. Use `Esc` to exit search, then `←` to navigate back or close Monarch. Exception: if a file preview peek is open, `←` closes that preview first even while search is active.
 
