@@ -166,6 +166,7 @@ final class CascadeModel: ObservableObject {
         searchVisible.removeValue(forKey: level)
         filterText.removeValue(forKey: level)
         filterHighlightIndex.removeValue(forKey: level)
+        invalidateVisibleCache(forLevel: level)
         if focusSearchLevel == level { focusSearchLevel = nil }
     }
 
@@ -175,6 +176,9 @@ final class CascadeModel: ObservableObject {
             filterHighlightIndex.removeValue(forKey: level)
         } else {
             filterText[level] = text
+        }
+        invalidateVisibleCache(forLevel: level)
+        if !text.isEmpty {
             updateFilterHighlight(forLevel: level)
         }
         if deferFocus {
@@ -186,23 +190,54 @@ final class CascadeModel: ObservableObject {
         focusFirstVisibleResult(forLevel: level)
     }
 
+    /// Cached `visibleIndices` results, keyed by level. SwiftUI body
+    /// re-evaluations call this repeatedly per render — without caching,
+    /// each call rebuilds the filtered array (O(N) per call), and
+    /// `isIndexVisible` then linear-scanned the array (another O(N)),
+    /// becoming O(N²) per row in worst case. Cache is invalidated by
+    /// `invalidateVisibleCache(forLevel:)` whenever items or filter change.
+    private var visibleCache: [Int: [Int]] = [:]
+    /// Set version of `visibleCache` for O(1) `isIndexVisible` lookups.
+    private var visibleCacheSet: [Int: Set<Int>] = [:]
+
     func visibleIndices(forLevel level: Int) -> [Int] {
+        if let cached = visibleCache[level] { return cached }
         guard levels.indices.contains(level) else { return [] }
         let items = levels[level].items
         let filter = filterText[level]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !filter.isEmpty else { return Array(items.indices) }
-        return items.indices.filter { index in
-            itemMatchesFilter(items[index], filter: filter)
+        let result: [Int]
+        if filter.isEmpty {
+            result = Array(items.indices)
+        } else {
+            result = items.indices.filter { itemMatchesFilter(items[$0], filter: filter) }
         }
+        visibleCache[level] = result
+        visibleCacheSet[level] = Set(result)
+        return result
     }
 
     func isIndexVisible(_ index: Int, forLevel level: Int) -> Bool {
-        visibleIndices(forLevel: level).contains(index)
+        // Build cache lazily if it hasn't been populated yet.
+        if visibleCacheSet[level] == nil { _ = visibleIndices(forLevel: level) }
+        return visibleCacheSet[level]?.contains(index) ?? false
     }
 
     private func itemMatchesFilter(_ item: FileItem, filter: String) -> Bool {
         item.displayName.localizedCaseInsensitiveContains(filter)
             || item.name.localizedCaseInsensitiveContains(filter)
+    }
+
+    /// Drop cached visible-indices results for one level (or all if nil).
+    /// Call after any change that affects what should be visible: filter
+    /// text, level item contents, or level structure.
+    private func invalidateVisibleCache(forLevel level: Int? = nil) {
+        if let level {
+            visibleCache.removeValue(forKey: level)
+            visibleCacheSet.removeValue(forKey: level)
+        } else {
+            visibleCache.removeAll()
+            visibleCacheSet.removeAll()
+        }
     }
 
     private func updateFilterHighlight(forLevel level: Int) {
@@ -415,6 +450,7 @@ final class CascadeModel: ObservableObject {
         } else {
             levels[0].setContents(items, sections)
         }
+        invalidateVisibleCache(forLevel: 0)
 
         if let focusedURL, let newIdx = items.firstIndex(where: { $0.url == focusedURL }) {
             focus = Focus(level: 0, index: newIdx)
@@ -515,6 +551,7 @@ final class CascadeModel: ObservableObject {
                                   sourceModifiedAt: result.sourceModifiedAt,
                                   readError: result.readError,
                                   unmountedVolumeName: result.unmountedVolumeName)
+        invalidateVisibleCache(forLevel: level)
         updateFilterHighlight(forLevel: level)
 
         // Restore focus.
@@ -893,6 +930,7 @@ final class CascadeModel: ObservableObject {
                                            sourceModifiedAt: result.sourceModifiedAt,
                                            readError: result.readError,
                                            unmountedVolumeName: result.unmountedVolumeName)
+            self.invalidateVisibleCache(forLevel: level)
         }
     }
 
@@ -934,6 +972,8 @@ final class CascadeModel: ObservableObject {
             if levels.count > level + 1 {
                 levels.removeLast(levels.count - level - 1)
             }
+            // Old levels beyond `level` had their own visible-index caches.
+            invalidateVisibleCache()
         } else {
             return false
         }
@@ -989,6 +1029,7 @@ final class CascadeModel: ObservableObject {
         // Trim model levels beyond minLevel (keep levels[0...minLevel]).
         if levels.count > minLevel + 1 {
             levels.removeLast(levels.count - minLevel - 1)
+            invalidateVisibleCache()
         }
         // Keep pathIndices[minLevel] — it records which row at the surviving
         // level opened the now-closed peek, needed for focus restoration.
