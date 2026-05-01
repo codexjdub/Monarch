@@ -25,6 +25,7 @@ enum UDKey {
     static let rootShortcutAliases  = "rootShortcutAliases"
     static let frequentItems        = "frequentItems"
     static let hiddenFrequentItems  = "hiddenFrequentItems"
+    static let savedFolderBookmarks = "savedFolderBookmarks"
 }
 
 enum FrequentSectionConfig {
@@ -174,25 +175,53 @@ extension UserDefaults {
 @MainActor
 final class Settings {
     static let shared = Settings()
-    private let key = "savedFolderBookmarks"
 
     private init() {}
 
     func loadFolders() -> [URL] {
-        guard let bookmarkList = UserDefaults.standard.array(forKey: key) as? [Data] else {
+        guard let bookmarkList = UserDefaults.standard.array(forKey: UDKey.savedFolderBookmarks) as? [Data] else {
             return []
         }
-        return bookmarkList.compactMap { data in
+        // Resolve each bookmark, refreshing any that resolved as stale (folder
+        // moved). Without this, a relocated folder works once but the bookmark
+        // never gets updated, so future moves can't be tracked.
+        var refreshNeeded = false
+        var resolvedURLs: [URL] = []
+        var refreshedBookmarks: [Data] = []
+        for data in bookmarkList {
             var isStale = false
-            return try? URL(resolvingBookmarkData: data, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &isStale)
+            guard let url = try? URL(resolvingBookmarkData: data,
+                                     options: [],
+                                     relativeTo: nil,
+                                     bookmarkDataIsStale: &isStale) else {
+                refreshedBookmarks.append(data) // keep original; we'll re-fail next time
+                continue
+            }
+            resolvedURLs.append(url)
+            if isStale, let refreshed = try? url.bookmarkData(options: [],
+                                                              includingResourceValuesForKeys: nil,
+                                                              relativeTo: nil) {
+                refreshedBookmarks.append(refreshed)
+                refreshNeeded = true
+            } else {
+                refreshedBookmarks.append(data)
+            }
         }
+        if refreshNeeded {
+            UserDefaults.standard.set(refreshedBookmarks, forKey: UDKey.savedFolderBookmarks)
+        }
+        return resolvedURLs
     }
 
     func saveFolders(_ urls: [URL]) {
+        // Plain bookmarks (not security-scoped). Monarch is not sandboxed, so
+        // it has direct file system access — security-scoped bookmarks are
+        // unnecessary and only matter for sandboxed apps that need explicit
+        // permission grants per user-selected folder.
         let bookmarks = urls.compactMap { url in
-            try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
+            try? url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
         }
-        UserDefaults.standard.set(bookmarks, forKey: key)
+        UserDefaults.standard.set(bookmarks, forKey: UDKey.savedFolderBookmarks)
     }
 
     func loadShortcutAliases() -> [String: String] {
