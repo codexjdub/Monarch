@@ -55,6 +55,10 @@ final class CascadeModel: ObservableObject {
     /// Wired by StatusItemController to call store.remove(_:).
     var onRemoveRoot: ((URL) -> Void)?
 
+    /// Called when a root-row context menu asks to edit the shortcuts list.
+    /// Wired by StatusItemController to open Preferences.
+    var onOpenPreferences: (() -> Void)?
+
     // Peek window manager (levels 1+). Level 0 is the NSPopover, not owned here.
     private let peekManager = PeekWindowManager()
 

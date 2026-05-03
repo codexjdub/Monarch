@@ -53,11 +53,12 @@ This compiles a universal release build, assembles `Monarch.app`, ad-hoc codesig
 | Space | Quick Look focused file |
 | ⌘F | Search / filter the current level |
 | Esc | Clear selection first, then exit search / close peek / close Monarch |
+| … menu → Show Hidden Files (.DS_Store stays hidden) | Reveal normal dotfiles while keeping Finder metadata hidden |
 | Drag file/folder onto menu bar icon | Add it to your shortcuts |
 | Drag file onto folder row | Move/copy into that folder |
 | Hold drag over folder (500ms) | Spring-load: peek opens mid-drag |
 | ⌘-click rows | Multi-select for bulk drag or open |
-| Right-click a row | Context menu (pin, rename, set display name, add to Monarch, open in Terminal, copy path, share, trash…) |
+| Right-click a row | Context menu (pin, rename, set display name, edit shortcuts for root rows, add to Monarch, open in Terminal, copy path, share, trash…) |
 
 In search mode, `←` keeps its normal text-editing behavior in the search field. Use `Esc` to exit search, then `←` to navigate back or close Monarch. Exception: if a file preview peek is open, `←` closes that preview first even while search is active.
 

@@ -650,6 +650,9 @@ struct LevelListBody: View {
             updateRootDisplayNameHandler: level == 0 && item.role == .rootShortcut
                 ? { url, displayName in model.setRootDisplayName(displayName, for: url) }
                 : nil,
+            editShortcutsHandler: level == 0 && item.role == .rootShortcut
+                ? { model.onOpenPreferences?() }
+                : nil,
             addToRootHandler: item.role != .rootShortcut && !model.isInRoot(item.url)
                 ? { model.addToRoot($0) }
                 : nil,

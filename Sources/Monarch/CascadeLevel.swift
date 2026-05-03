@@ -162,6 +162,7 @@ extension CascadeModel {
                                   readError: true,
                                   unmountedVolumeName: folder.unmountedVolumeName)
         }
+        let displayableContents = contents.filter { $0.lastPathComponent != ".DS_Store" }
 
         // Pre-fetch all file attributes in one pass so that sort comparators
         // and the totalSize reduce can do plain dictionary lookups instead of
@@ -171,8 +172,8 @@ extension CascadeModel {
             var createDate: Date
             var fileSize: Int
         }
-        var attrs = [URL: Attrs](minimumCapacity: contents.count)
-        for url in contents {
+        var attrs = [URL: Attrs](minimumCapacity: displayableContents.count)
+        for url in displayableContents {
             let r = try? url.resourceValues(forKeys: [.contentModificationDateKey,
                                                       .creationDateKey, .fileSizeKey])
             attrs[url] = Attrs(
@@ -182,7 +183,7 @@ extension CascadeModel {
             )
         }
 
-        let visibleItems = contents
+        let visibleItems = displayableContents
             .map { FileItem(url: $0) }
             .filter { showHidden || !$0.isHidden }
 

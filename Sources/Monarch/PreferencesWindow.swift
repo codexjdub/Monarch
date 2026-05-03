@@ -238,27 +238,30 @@ struct PreferencesView: View {
                 Text("Show a Frequent section at the top of Monarch's main list.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                HStack {
-                    Text("Items to show")
-                    Spacer()
-                    Text("\(frequentDisplayLimit)")
-                        .font(.system(size: 13, weight: .medium, design: .monospaced))
-                        .frame(minWidth: 24, alignment: .trailing)
-                    Stepper("", value: $frequentDisplayLimit, in: FrequentSectionConfig.displayLimitRange)
-                        .labelsHidden()
-                }
-                .disabled(!showFrequentSection)
-                .opacity(showFrequentSection ? 1 : 0.5)
-                Text("Items need at least \(FrequentStore.minimumQualifiedAccessCount) opens before they appear.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                HStack {
-                    Button("Reset Frequent…") {
-                        showingResetFrequentAlert = true
+
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("Items to show")
+                        Spacer()
+                        Text("\(frequentDisplayLimit)")
+                            .font(.system(size: 13, weight: .medium, design: .monospaced))
+                            .frame(minWidth: 24, alignment: .trailing)
+                        Stepper("", value: $frequentDisplayLimit, in: FrequentSectionConfig.displayLimitRange)
+                            .labelsHidden()
                     }
-                    .buttonStyle(.bordered)
-                    .tint(.red)
-                    Spacer()
+                    .disabled(!showFrequentSection)
+                    .opacity(showFrequentSection ? 1 : 0.5)
+                    Text("Items need at least \(FrequentStore.minimumQualifiedAccessCount) opens before they appear.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    HStack {
+                        Button("Reset Frequent…") {
+                            showingResetFrequentAlert = true
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(.red)
+                        Spacer()
+                    }
                 }
                 .padding(.leading, 16)
             }

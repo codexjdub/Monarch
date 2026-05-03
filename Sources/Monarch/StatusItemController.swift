@@ -36,6 +36,9 @@ class StatusItemController: NSObject {
         model.onRemoveRoot = { [weak self] url in
             self?.store.remove(url)
         }
+        model.onOpenPreferences = { [weak self] in
+            self?.openPreferences()
+        }
 
         setupButton()
         buildPopover()
@@ -416,7 +419,7 @@ class StatusItemController: NSObject {
 
         menu.addItem(.separator())
 
-        let hiddenItem = NSMenuItem(title: "Show Hidden Files", action: #selector(toggleHiddenFiles), keyEquivalent: "")
+        let hiddenItem = NSMenuItem(title: "Show Hidden Files (.DS_Store stays hidden)", action: #selector(toggleHiddenFiles), keyEquivalent: "")
         hiddenItem.target = self
         hiddenItem.state = UserDefaults.standard.bool(forKey: UDKey.showHiddenFiles) ? .on : .off
         menu.addItem(hiddenItem)

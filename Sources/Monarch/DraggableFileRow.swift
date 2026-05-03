@@ -23,6 +23,7 @@ class DraggableNSView: NSView, NSDraggingSource {
     var removeFromRootHandler: (() -> Void)?
     var replaceRootHandler: ((URL, URL) -> Void)?
     var updateRootDisplayNameHandler: ((URL, String?) -> Void)?
+    var editShortcutsHandler: (() -> Void)?
     var addToRootHandler: ((URL) -> Void)?
     var hideFromFrequentHandler: (() -> Void)?
     /// Called when a drag hovers this folder row long enough to spring-load.
@@ -320,10 +321,9 @@ extension DraggableNSView /* Context Menu */ {
         case .rootShortcut:
             appendSection(to: menu) { self.addOpenItems(to: menu, item: item, urlsToAct: urlsToAct) }
             appendSection(to: menu) { self.addCopyAndShareItems(to: menu, item: item, urlsToAct: urlsToAct) }
-            appendSection(to: menu) { self.addDisplayNameItems(to: menu, item: item, urlsToAct: urlsToAct) }
+            appendSection(to: menu) { self.addRootShortcutManagementItems(to: menu, item: item, urlsToAct: urlsToAct) }
             appendSection(to: menu) { self.addFileManagementItems(to: menu, item: item, urlsToAct: urlsToAct) }
             appendSection(to: menu) { self.addTrashItem(to: menu, urlsToAct: urlsToAct) }
-            appendSection(to: menu) { self.addRemoveFromMonarchItem(to: menu) }
         case .frequent:
             appendSection(to: menu) { self.addOpenItems(to: menu, item: item, urlsToAct: urlsToAct) }
             appendSection(to: menu) { self.addCopyAndShareItems(to: menu, item: item, urlsToAct: urlsToAct) }
@@ -442,6 +442,15 @@ extension DraggableNSView /* Context Menu */ {
         if item.displayNameOverride != nil {
             menu.addItem(withTitle: "Clear Display Name", action: #selector(clearDisplayNameAction), keyEquivalent: "").target = self
         }
+    }
+
+    private func addRootShortcutManagementItems(to menu: NSMenu, item: FileItem, urlsToAct: [URL]) {
+        guard urlsToAct.count == 1 else { return }
+        addDisplayNameItems(to: menu, item: item, urlsToAct: urlsToAct)
+        if editShortcutsHandler != nil {
+            menu.addItem(withTitle: "Edit Shortcuts…", action: #selector(editShortcuts), keyEquivalent: "").target = self
+        }
+        addRemoveFromMonarchItem(to: menu)
     }
 
     private func addTrashItem(to menu: NSMenu, urlsToAct: [URL]) {
@@ -594,6 +603,10 @@ extension DraggableNSView /* Actions */ {
         removeFromRootHandler?()
     }
 
+    @objc private func editShortcuts() {
+        editShortcutsHandler?()
+    }
+
     @objc private func editDisplayNameAction() {
         guard let item = fileItem else { return }
         let alert = NSAlert()
@@ -732,6 +745,7 @@ struct DraggableFileRow: NSViewRepresentable {
     var removeFromRootHandler: (() -> Void)? = nil
     var replaceRootHandler: ((URL, URL) -> Void)? = nil
     var updateRootDisplayNameHandler: ((URL, String?) -> Void)? = nil
+    var editShortcutsHandler: (() -> Void)? = nil
     var addToRootHandler: ((URL) -> Void)? = nil
     var hideFromFrequentHandler: (() -> Void)? = nil
 
@@ -746,6 +760,7 @@ struct DraggableFileRow: NSViewRepresentable {
         view.removeFromRootHandler = removeFromRootHandler
         view.replaceRootHandler = replaceRootHandler
         view.updateRootDisplayNameHandler = updateRootDisplayNameHandler
+        view.editShortcutsHandler = editShortcutsHandler
         view.addToRootHandler = addToRootHandler
         view.hideFromFrequentHandler = hideFromFrequentHandler
 
@@ -778,6 +793,7 @@ struct DraggableFileRow: NSViewRepresentable {
         nsView.removeFromRootHandler = removeFromRootHandler
         nsView.replaceRootHandler = replaceRootHandler
         nsView.updateRootDisplayNameHandler = updateRootDisplayNameHandler
+        nsView.editShortcutsHandler = editShortcutsHandler
         nsView.addToRootHandler = addToRootHandler
         nsView.hideFromFrequentHandler = hideFromFrequentHandler
         nsView.setRowHighlight(
