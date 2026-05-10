@@ -21,12 +21,32 @@ struct RootShortcut: Hashable {
 
 @MainActor
 final class ShortcutStore: ObservableObject {
-    @Published var shortcuts: [RootShortcut]
+    @Published var shortcuts: [RootShortcut] = []
 
     init() {
-        let aliases = Settings.shared.loadShortcutAliases()
-        shortcuts = Settings.shared.loadFolders().map {
-            RootShortcut(url: $0, alias: aliases[$0.path])
+        // Resolve bookmarks off the main thread so a saved shortcut on a
+        // hung network share can't freeze app startup. The status item
+        // appears immediately with an empty list; shortcuts populate as
+        // the resolution completes. Existing observers (CascadeModel
+        // subscribes to $shortcuts) handle the empty-then-populated
+        // transition idempotently.
+        Task.detached(priority: .userInitiated) {
+            let aliases = Settings.shared.loadShortcutAliases()
+            let urls = Settings.shared.loadFolders()
+            let resolved = urls.map { RootShortcut(url: $0, alias: aliases[$0.path]) }
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                // Only apply the resolved list if the user hasn't already
+                // mutated `shortcuts` during the (potentially slow) async
+                // load — e.g. the resolution stalled on a hung network
+                // share long enough that the user opened the empty popover
+                // and added a fresh shortcut. In that case the user's
+                // changes win; clobbering them with the resolved list
+                // would also have lost their persisted add (since their
+                // own persist() already overwrote UserDefaults).
+                guard self.shortcuts.isEmpty else { return }
+                self.shortcuts = resolved
+            }
         }
     }
 

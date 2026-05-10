@@ -172,11 +172,24 @@ extension UserDefaults {
     }
 }
 
-@MainActor
-final class Settings {
+/// Persistence helper for root shortcut bookmarks and aliases. Not main-actor
+/// isolated so bookmark resolution can run off the main thread at startup —
+/// a saved shortcut on a stuck network share would otherwise freeze app
+/// launch (URL(resolvingBookmarkData:) blocks indefinitely on hung I/O).
+/// All methods just delegate to UserDefaults, which is documented thread-safe.
+final class Settings: Sendable {
     static let shared = Settings()
 
     private init() {}
+
+    /// Cheap "has the user ever added a shortcut?" probe. Reads the bookmark
+    /// list count from UserDefaults without resolving any bookmarks, so it
+    /// can answer instantly even if a saved bookmark would block on
+    /// resolution. Used for the first-launch onboarding decision.
+    var hasStoredFolders: Bool {
+        let list = UserDefaults.standard.array(forKey: UDKey.savedFolderBookmarks) as? [Data]
+        return !(list?.isEmpty ?? true)
+    }
 
     func loadFolders() -> [URL] {
         guard let bookmarkList = UserDefaults.standard.array(forKey: UDKey.savedFolderBookmarks) as? [Data] else {
