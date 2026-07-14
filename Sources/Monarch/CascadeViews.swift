@@ -48,7 +48,10 @@ struct LevelListView: View {
         }
         if state.readError { return "Can't read folder" }
         if state.isLoading { return "Loading…" }
-        return level == 0 ? "No folders yet" : "Empty folder"
+        if level == 0 {
+            return model.isInitialShortcutLoadPending ? "Loading shortcuts…" : "No folders yet"
+        }
+        return "Empty folder"
     }
 
     @ViewBuilder private var listBody: some View {
@@ -58,7 +61,8 @@ struct LevelListView: View {
                 Text(emptyMessage(for: state))
                     .foregroundStyle(.secondary)
                     .font(.system(size: 13))
-                if level == 0 && !state.readError && !state.isLoading {
+                if level == 0 && !state.readError && !state.isLoading
+                    && !model.isInitialShortcutLoadPending {
                     Text("Click ··· to add a folder")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
@@ -429,7 +433,22 @@ struct LevelListBody: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if level == 0 {
-            OnboardingEmptyView()
+            if model.isInitialShortcutLoadPending {
+                // Saved shortcuts may exist but haven't resolved yet — don't
+                // show onboarding, it would invite re-adding what's saved.
+                VStack(spacing: 8) {
+                    Spacer()
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Loading shortcuts…")
+                        .foregroundStyle(.secondary)
+                        .font(.system(size: 13))
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                OnboardingEmptyView()
+            }
         } else {
             VStack {
                 Spacer()

@@ -176,65 +176,66 @@ extension UserDefaults {
 /// isolated so bookmark resolution can run off the main thread at startup —
 /// a saved shortcut on a stuck network share would otherwise freeze app
 /// launch (URL(resolvingBookmarkData:) blocks indefinitely on hung I/O).
-/// All methods just delegate to UserDefaults, which is documented thread-safe.
+/// Reads and writes delegate to UserDefaults, which is documented thread-safe;
+/// `saveBookmarks` and `saveShortcutAliases` are read-modify-write against the
+/// in-memory shortcut list, so ShortcutStore only calls them on the main actor
+/// to keep UserDefaults single-writer.
 final class Settings: Sendable {
     static let shared = Settings()
 
     private init() {}
 
+    /// Raw bookmark blobs exactly as stored. Single accessor for the storage
+    /// format so the onboarding probe and the startup resolver can't drift
+    /// apart on how the list is read.
+    var storedBookmarks: [Data] {
+        UserDefaults.standard.array(forKey: UDKey.savedFolderBookmarks) as? [Data] ?? []
+    }
+
     /// Cheap "has the user ever added a shortcut?" probe. Reads the bookmark
-    /// list count from UserDefaults without resolving any bookmarks, so it
-    /// can answer instantly even if a saved bookmark would block on
-    /// resolution. Used for the first-launch onboarding decision.
-    var hasStoredFolders: Bool {
-        let list = UserDefaults.standard.array(forKey: UDKey.savedFolderBookmarks) as? [Data]
-        return !(list?.isEmpty ?? true)
+    /// list without resolving any bookmarks, so it can answer instantly even
+    /// if a saved bookmark would block on resolution. Used for the
+    /// first-launch onboarding decision.
+    var hasStoredFolders: Bool { !storedBookmarks.isEmpty }
+
+    /// Resolves one stored bookmark blob. `.withoutUI` and `.withoutMounting`
+    /// keep resolution silent: Monarch never initiates a network mount or
+    /// triggers the system "server is not available" dialog — a bookmark on
+    /// an unmounted volume simply fails fast and surfaces as an unresolved
+    /// row until the user mounts the volume themselves. Still blocking (a
+    /// mounted-but-dead share can stall on I/O), so call it off the main
+    /// thread.
+    func resolveBookmark(_ data: Data) -> (url: URL, isStale: Bool)? {
+        var isStale = false
+        guard let url = try? URL(resolvingBookmarkData: data,
+                                 options: [.withoutUI, .withoutMounting],
+                                 relativeTo: nil,
+                                 bookmarkDataIsStale: &isStale) else { return nil }
+        return (url, isStale)
     }
 
-    func loadFolders() -> [URL] {
-        guard let bookmarkList = UserDefaults.standard.array(forKey: UDKey.savedFolderBookmarks) as? [Data] else {
-            return []
-        }
-        // Resolve each bookmark, refreshing any that resolved as stale (folder
-        // moved). Without this, a relocated folder works once but the bookmark
-        // never gets updated, so future moves can't be tracked.
-        var refreshNeeded = false
-        var resolvedURLs: [URL] = []
-        var refreshedBookmarks: [Data] = []
-        for data in bookmarkList {
-            var isStale = false
-            guard let url = try? URL(resolvingBookmarkData: data,
-                                     options: [],
-                                     relativeTo: nil,
-                                     bookmarkDataIsStale: &isStale) else {
-                refreshedBookmarks.append(data) // keep original; we'll re-fail next time
-                continue
-            }
-            resolvedURLs.append(url)
-            if isStale, let refreshed = try? url.bookmarkData(options: [],
-                                                              includingResourceValuesForKeys: nil,
-                                                              relativeTo: nil) {
-                refreshedBookmarks.append(refreshed)
-                refreshNeeded = true
-            } else {
-                refreshedBookmarks.append(data)
-            }
-        }
-        if refreshNeeded {
-            UserDefaults.standard.set(refreshedBookmarks, forKey: UDKey.savedFolderBookmarks)
-        }
-        return resolvedURLs
+    /// Reads the path cached inside bookmark data without resolving it: no
+    /// I/O, no mount attempt, no UI. Lets an unresolvable bookmark render as
+    /// a visible (greyed-out) shortcut row.
+    func cachedBookmarkInfo(_ data: Data) -> (path: String, isDirectory: Bool)? {
+        let values = URL.resourceValues(forKeys: [.pathKey, .isDirectoryKey], fromBookmarkData: data)
+        guard let path = values?.path else { return nil }
+        return (path, values?.isDirectory ?? true)
     }
 
-    func saveFolders(_ urls: [URL]) {
-        // Plain bookmarks (not security-scoped). Monarch is not sandboxed, so
-        // it has direct file system access — security-scoped bookmarks are
-        // unnecessary and only matter for sandboxed apps that need explicit
-        // permission grants per user-selected folder.
-        let bookmarks = urls.compactMap { url in
-            try? url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
-        }
-        UserDefaults.standard.set(bookmarks, forKey: UDKey.savedFolderBookmarks)
+    /// Fresh bookmark data for a live URL. Generating anew on every save is
+    /// also what refreshes stale bookmarks after a folder moves.
+    ///
+    /// Plain bookmarks (not security-scoped). Monarch is not sandboxed, so
+    /// it has direct file system access — security-scoped bookmarks are
+    /// unnecessary and only matter for sandboxed apps that need explicit
+    /// permission grants per user-selected folder.
+    func makeBookmark(for url: URL) -> Data? {
+        try? url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
+    }
+
+    func saveBookmarkBlobs(_ blobs: [Data]) {
+        UserDefaults.standard.set(blobs, forKey: UDKey.savedFolderBookmarks)
     }
 
     func loadShortcutAliases() -> [String: String] {
@@ -243,17 +244,5 @@ final class Settings: Sendable {
 
     func saveShortcutAliases(_ aliases: [String: String]) {
         UserDefaults.standard.set(aliases, forKey: UDKey.rootShortcutAliases)
-    }
-
-    func addFolder(_ url: URL) {
-        var current = loadFolders()
-        guard !current.contains(url) else { return }
-        current.append(url)
-        saveFolders(current)
-    }
-
-    func removeFolder(_ url: URL) {
-        let current = loadFolders().filter { $0 != url }
-        saveFolders(current)
     }
 }

@@ -477,7 +477,7 @@ final class CascadeModel: ObservableObject {
     }
 
     private func installWatchersForLevel0() {
-        let folderShortcuts = shortcutStore.shortcuts.filter { $0.url.hasDirectoryPath }
+        let folderShortcuts = shortcutStore.shortcuts.filter { !$0.isUnresolved && $0.url.hasDirectoryPath }
         let paths = folderShortcuts.map { $0.url.standardizedFileURL.path }
         guard paths != level0WatcherPaths else { return }
 
@@ -1090,4 +1090,9 @@ final class CascadeModel: ObservableObject {
     func isInRoot(_ url: URL) -> Bool {
         shortcutStore.shortcuts.contains { $0.url == url }
     }
+
+    /// True while the startup bookmark resolution hasn't landed yet. Level 0
+    /// must show a neutral loading state instead of onboarding — the user may
+    /// have saved shortcuts that simply haven't resolved.
+    var isInitialShortcutLoadPending: Bool { !shortcutStore.initialLoadApplied }
 }
