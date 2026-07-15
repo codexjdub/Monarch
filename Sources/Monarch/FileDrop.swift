@@ -20,8 +20,12 @@ enum FileDropHelper {
             // "name copy" path, silently renaming the file. Finder does
             // nothing here too. Counted as success: nothing needed to happen
             // and nothing failed. Copies fall through — copy-into-same-folder
-            // duplicates, matching Finder.
-            if isMove, src.deletingLastPathComponent().standardizedFileURL == dest.standardizedFileURL {
+            // duplicates, matching Finder. Compare symlink-resolved *paths*,
+            // not URLs: trailing-slash form and /var vs /private/var symlink
+            // aliases make URL equality unreliable (caught by FileDropTests).
+            if isMove,
+               src.deletingLastPathComponent().resolvingSymlinksInPath().path
+                   == dest.resolvingSymlinksInPath().path {
                 success += 1
                 continue
             }

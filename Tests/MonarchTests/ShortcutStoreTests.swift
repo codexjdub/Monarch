@@ -33,9 +33,14 @@ final class ShortcutStoreTests: XCTestCase {
     }
 
     private func makeTempDir(_ label: String) throws -> URL {
-        let url = URL(fileURLWithPath: NSTemporaryDirectory())
+        let raw = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("ShortcutStoreTests-\(label)-\(UUID().uuidString)")
-        try fm.createDirectory(at: url, withIntermediateDirectories: true)
+        try fm.createDirectory(at: raw, withIntermediateDirectories: true)
+        // Canonicalize: bookmark resolution returns /private/var/... while
+        // NSTemporaryDirectory() hands out the /var/... symlink form. Seeding
+        // and asserting with the canonical path keeps expectations aligned
+        // with what resolution (and the blob's cached path) produce.
+        let url = raw.resolvingSymlinksInPath()
         tempDirs.append(url)
         return url
     }
