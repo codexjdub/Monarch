@@ -15,7 +15,16 @@ enum FileDropHelper {
         for src in urls {
             // Don't drop an item into itself or its own subtree.
             if dest == src || dest.path.hasPrefix(src.path + "/") { continue }
-            // Don't drop into the folder the item is already in with the same name.
+            // Moving into the folder the item is already in is a no-op —
+            // without this check uniqueDestination would "move" it onto a
+            // "name copy" path, silently renaming the file. Finder does
+            // nothing here too. Counted as success: nothing needed to happen
+            // and nothing failed. Copies fall through — copy-into-same-folder
+            // duplicates, matching Finder.
+            if isMove, src.deletingLastPathComponent().standardizedFileURL == dest.standardizedFileURL {
+                success += 1
+                continue
+            }
             let target = uniqueDestination(for: src, in: dest)
             do {
                 if isMove {

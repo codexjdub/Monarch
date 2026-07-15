@@ -649,7 +649,12 @@ extension DraggableNSView /* Actions */ {
             }
             return
         }
-        NSWorkspace.shared.recycle(urls, completionHandler: nil)
+        NSWorkspace.shared.recycle(urls) { [weak self] _, error in
+            guard let error else { return }
+            DispatchQueue.main.async {
+                self?.showFileOperationError(title: "Couldn't Move to Trash", error: error)
+            }
+        }
     }
 
     @objc private func renameAction() {
@@ -668,6 +673,10 @@ extension DraggableNSView /* Actions */ {
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         let newName = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !newName.isEmpty, newName != item.name else { return }
+        guard isValidFileName(newName) else {
+            showInvalidNameAlert(title: "Couldn't Rename")
+            return
+        }
 
         let dest = item.url.deletingLastPathComponent().appendingPathComponent(newName)
         do {
@@ -684,6 +693,20 @@ extension DraggableNSView /* Actions */ {
         let err = NSAlert()
         err.messageText = title
         err.informativeText = error.localizedDescription
+        err.runModal()
+    }
+
+    /// "/" builds a subpath (appendingPathComponent treats it as a separator,
+    /// silently relocating the file) and ":" renders as "/" in Finder.
+    /// Finder rejects both up front; so do we.
+    private func isValidFileName(_ name: String) -> Bool {
+        !name.contains("/") && !name.contains(":")
+    }
+
+    private func showInvalidNameAlert(title: String) {
+        let err = NSAlert()
+        err.messageText = title
+        err.informativeText = "Names can't contain \"/\" or \":\"."
         err.runModal()
     }
 
@@ -712,6 +735,10 @@ extension DraggableNSView /* Actions */ {
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         let raw = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         let name = raw.isEmpty ? "New Folder" : raw
+        guard isValidFileName(name) else {
+            showInvalidNameAlert(title: "Couldn't Create Folder")
+            return
+        }
 
         var dest = directory.appendingPathComponent(name)
         if FileManager.default.fileExists(atPath: dest.path) {

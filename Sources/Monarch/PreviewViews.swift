@@ -675,12 +675,16 @@ struct ArchivePreviewView: View {
                 ? Self.run("/usr/bin/unzip", args: ["-Z1", fileURL.path])
                 : Self.run("/usr/bin/tar",   args: ["-tf",  fileURL.path])
             let completeLines = result.outputTruncated || result.timedOut ? Array(lines.dropLast()) : lines
-            let parsed = Array(completeLines
+            // Filter empties before counting — the final newline in the tool
+            // output yields a trailing empty component that must not make the
+            // footer claim the listing was limited.
+            let trimmedLines = completeLines
                 .map  { $0.trimmingCharacters(in: .whitespaces) }
                 .filter { !$0.isEmpty }
+            let parsed = Array(trimmedLines
                 .prefix(ListingLimits.maxEntries)
                 .map  { ArchiveEntry(path: $0) })
-            let entryLimited = completeLines.count > parsed.count
+            let entryLimited = trimmedLines.count > parsed.count
             await MainActor.run {
                 self.entries = parsed
                 self.listingWasLimited = result.timedOut || result.outputTruncated || entryLimited
@@ -732,18 +736,12 @@ struct ArchivePreviewView: View {
         }
 
         let snapshot = output.snapshot()
-        let data = snapshot.data
-        guard let output = String(data: data, encoding: .utf8) else {
-            let result = ArchiveCommandResult(
-                lines: [],
-                success: false,
-                timedOut: timedOut,
-                outputTruncated: snapshot.truncated
-            )
-            return ([], result)
-        }
+        // Lossy decode: the byte cap (or a timeout's arbitrary chunk boundary)
+        // can split a multi-byte UTF-8 character, and a strict decode would
+        // turn a merely-truncated listing into a hard failure.
+        let text = String(decoding: snapshot.data, as: UTF8.self)
         let result = ArchiveCommandResult(
-            lines: output.components(separatedBy: "\n"),
+            lines: text.components(separatedBy: "\n"),
             success: didExit && !timedOut && proc.terminationStatus == 0,
             timedOut: timedOut,
             outputTruncated: snapshot.truncated

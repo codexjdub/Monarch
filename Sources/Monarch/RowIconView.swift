@@ -12,6 +12,7 @@ struct RowIconView: View {
     let item: FileItem
     @State private var thumbnail: NSImage?
     @State private var workspaceIcon: NSImage?
+    @State private var requestedURL: URL?
 
     var body: some View {
         Image(nsImage: displayImage)
@@ -25,6 +26,8 @@ struct RowIconView: View {
                 loadThumbnail()
             }
             .task(id: item.url) {
+                // Deferred until after first render. NSWorkspace's icon cache
+                // makes this cheap, but note it does run on the main actor.
                 workspaceIcon = NSWorkspace.shared.icon(forFile: item.url.path)
             }
     }
@@ -47,10 +50,12 @@ struct RowIconView: View {
             return
         }
         let url = item.url
+        requestedURL = url
         ThumbnailCache.shared.thumbnail(for: item) { img in
-            // Guard against row reuse: only accept the image if our URL
-            // hasn't changed.
-            if item.url == url { self.thumbnail = img }
+            // Row-reuse guard. Reading @State here goes through SwiftUI's
+            // storage and reflects the *current* request — unlike `item`,
+            // whose captured copy would make the comparison always true.
+            if requestedURL == url { thumbnail = img }
         }
     }
 }

@@ -238,6 +238,12 @@ class StatusItemController: NSObject {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
 
+            // A modal alert (rename, display name, new folder, missing
+            // shortcut) owns the keyboard; local monitors still fire during
+            // runModal, and intercepting here would swallow typing into the
+            // alert's text field whenever a search filter is active.
+            if NSApp.modalWindow != nil { return event }
+
             // ⌘,: open Preferences.
             if event.keyCode == 43,
                event.modifierFlags.intersection([.command, .option, .shift, .control]) == .command {

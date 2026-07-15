@@ -160,12 +160,18 @@ struct CascadeRootView: View {
     let onResizeDrag: (CGSize) -> Void
     let onResizeEnded: () -> Void
 
+    /// Loaded once — body re-evaluates on every model publish (each hover
+    /// moves focus), and re-reading the PNG from disk per render was
+    /// measurable I/O on the hottest input path.
+    private static let headerIcon: NSImage? = Bundle.main
+        .url(forResource: "AppIconArtwork", withExtension: "png")
+        .flatMap { NSImage(contentsOf: $0) }
+
     var body: some View {
         VStack(spacing: 0) {
             // Top bar with settings button (replaces LevelListView's header for level 0)
             HStack {
-                if let url = Bundle.main.url(forResource: "AppIconArtwork", withExtension: "png"),
-                   let img = NSImage(contentsOf: url) {
+                if let img = Self.headerIcon {
                     Image(nsImage: img)
                         .resizable()
                         .frame(width: 20, height: 20)
@@ -679,6 +685,11 @@ struct LevelListBody: View {
                 ? { FrequentStore.shared.hide(item.url) }
                 : nil
         )
+        // NOTE: this identity churn (focus/path state in .id, UUID item ids)
+        // is currently load-bearing: RowFrameReporter only re-reports row
+        // frames when views are recreated or re-laid-out, and peek anchors
+        // come from those frames. Removing the churn broke hover peeks —
+        // don't retry without making frame reporting identity-independent.
         .id("\(item.id.uuidString)-\(isActive ? "active" : "idle")-\(isPath ? "path" : "offpath")")
         .frame(height: density.rowHeight)
         .id(item.id)
