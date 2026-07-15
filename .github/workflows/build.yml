@@ -13,3 +13,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build
         run: swift build -c release
+      # Tests need XCTest, which ships with full Xcode (present on GitHub's
+      # macOS runners) but not with the Command Line Tools used for local
+      # development — so the suite runs here, not locally.
+      - name: Test
+        run: swift test

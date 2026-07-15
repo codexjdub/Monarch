@@ -19,6 +19,14 @@ let package = Package(
                 .linkedFramework("PDFKit"),
                 .linkedFramework("QuickLookThumbnailing")
             ]
+        ),
+        .testTarget(
+            name: "MonarchTests",
+            dependencies: ["Monarch"],
+            path: "Tests/MonarchTests",
+            swiftSettings: [
+                .swiftLanguageMode(.v6)
+            ]
         )
     ]
 )
