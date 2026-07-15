@@ -36,11 +36,15 @@ final class ShortcutStoreTests: XCTestCase {
         let raw = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("ShortcutStoreTests-\(label)-\(UUID().uuidString)")
         try fm.createDirectory(at: raw, withIntermediateDirectories: true)
-        // Canonicalize: bookmark resolution returns /private/var/... while
-        // NSTemporaryDirectory() hands out the /var/... symlink form. Seeding
-        // and asserting with the canonical path keeps expectations aligned
-        // with what resolution (and the blob's cached path) produce.
-        let url = raw.resolvingSymlinksInPath()
+        // Canonicalize via .canonicalPathKey: bookmark resolution returns
+        // /private/var/... while NSTemporaryDirectory() hands out the
+        // /var/... symlink form. Note resolvingSymlinksInPath() can NOT do
+        // this — it strips the /private prefix as a documented special case,
+        // returning the alias form. Verified: canonicalPath matches bookmark
+        // resolution output exactly.
+        let canonical = try XCTUnwrap(
+            raw.resourceValues(forKeys: [.canonicalPathKey]).canonicalPath)
+        let url = URL(fileURLWithPath: canonical, isDirectory: true)
         tempDirs.append(url)
         return url
     }
