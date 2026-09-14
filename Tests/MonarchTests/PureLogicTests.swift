@@ -79,26 +79,50 @@ final class PureLogicTests: XCTestCase {
         return dir
     }
 
-    /// Layer 2: types the allowlists miss but the system type database knows.
-    /// These must resolve from metadata alone — no file read.
-    func testSystemTypeDatabaseResolvesPlainTextExtensions() throws {
-        let dir = try makeDir("uttype")
+    /// Every plain text file must end up previewable, whichever layer gets it.
+    ///
+    /// Deliberately does NOT assert which layer resolves a given extension.
+    /// Layer 2's coverage depends on installed software — `.tex` resolves as
+    /// `org.tug.tex` on a machine with TeX and `.hs` as a Haskell script where
+    /// GHC is present, but both fall through to layer 3 on a clean CI runner.
+    /// That variation is the design working, not a defect, so assert the
+    /// contract that actually holds everywhere: nothing plain text is dropped.
+    func testPlainTextAlwaysReachesTextPreview() throws {
+        let dir = try makeDir("layers")
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        func item(_ name: String) throws -> FileItem {
-            let url = dir.appendingPathComponent(name)
-            try "content".data(using: .utf8)!.write(to: url)
-            return FileItem(url: url)
+        let names = ["patch.diff", "rules.mk", "paper.tex", "main.hs", "run.command",
+                     "window.qml", "config.before-systray-after-scratchpad", "COPYING"]
+        for name in names {
+            try "plain text content\n".data(using: .utf8)!
+                .write(to: dir.appendingPathComponent(name))
+        }
+        var items = names.map { FileItem(url: dir.appendingPathComponent($0)) }
+
+        // Before the sniff pass every one is either already routed or queued
+        // for layer 3 — never silently unpreviewable.
+        for item in items {
+            XCTAssertTrue(item.previewKind == .text || item.needsContentSniff,
+                          "\(item.name) must be resolved or queued, not dropped")
         }
 
-        for name in ["patch.diff", "rules.mk", "paper.tex", "main.hs", "run.command"] {
-            let it = try item(name)
-            XCTAssertEqual(it.previewKind, .text, "\(name) should resolve via UTType")
-            XCTAssertFalse(it.needsContentSniff, "\(name) resolved from metadata; no read needed")
+        FileItem.resolveUnclassifiedText(in: &items)
+        for item in items {
+            XCTAssertEqual(item.previewKind, .text,
+                           "\(item.name) is plain text and must preview as text")
         }
+    }
 
-        // A type the system positively knows is NOT text must not cost a sniff.
-        XCTAssertFalse(try item("photo.png").needsContentSniff)
+    /// A type the system positively knows is not text must never cost a read.
+    /// `public.png` is an Apple-declared type, present on every machine.
+    func testKnownBinaryTypeSkipsSniff() throws {
+        let dir = try makeDir("binaryskip")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("photo.png")
+        try Data([0x89, 0x50, 0x4E, 0x47]).write(to: url)
+        let item = FileItem(url: url)
+        XCTAssertEqual(item.previewKind, .image)
+        XCTAssertFalse(item.needsContentSniff)
     }
 
     /// Layer 3 gate: only genuinely unclassified files become candidates.
@@ -112,8 +136,12 @@ final class PureLogicTests: XCTestCase {
             return FileItem(url: url)
         }
 
-        // Unknown to both the allowlists and the type database.
-        for name in ["window.qml", "config.before-systray-after-scratchpad", "COPYING"] {
+        // Suffixes nothing can plausibly register, plus an extensionless file
+        // (empty extension always means "ask the bytes"). Real-world examples
+        // like .qml aren't used here: they'd start failing the day someone
+        // installs an app that claims the type — the same machine-dependence
+        // that broke the first version of these tests in CI.
+        for name in ["notes.zzqqx", "config.before-systray-after-scratchpad", "COPYING"] {
             XCTAssertTrue(try item(name).needsContentSniff, "\(name) must be sniffed")
         }
         // Already routed by the allowlists — nothing left to decide.
