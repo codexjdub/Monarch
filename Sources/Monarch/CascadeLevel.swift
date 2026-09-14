@@ -183,9 +183,17 @@ extension CascadeModel {
             )
         }
 
-        let visibleItems = displayableContents
+        var visibleItems = displayableContents
             .map { FileItem(url: $0) }
             .filter { showHidden || !$0.isHidden }
+
+        // Preview routing layer 3. The extension allowlists and the system
+        // type database classify almost everything; for the leftovers, read a
+        // bounded prefix and decide from the bytes. This is what lets files
+        // with arbitrary suffixes (`config.before-systray-after-scratchpad`)
+        // or no extension at all open a text peek. Safe here: loadFolder
+        // already runs off-main, and the pass is internally capped.
+        FileItem.resolveUnclassifiedText(in: &visibleItems)
 
         // Footer total reflects what the user actually sees: when hidden files
         // are filtered out, their bytes are excluded too.

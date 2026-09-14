@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 
 /// A previewable file kind. Files with a non-nil previewKind open a preview
 /// peek to the right (same hover/keyboard mechanics as folder peeks).
@@ -137,7 +138,14 @@ struct FileItem: Identifiable, Hashable {
     // would otherwise repeat on every row render.
     let isDirectory: Bool
     let fileSize: String?
-    let previewKind: PreviewKind?
+    /// `var` only so `loadFolder` can upgrade it to `.text` after a content
+    /// sniff resolves a file the metadata layers couldn't classify. Treat it
+    /// as read-only everywhere else — nothing should mutate a rendered item.
+    var previewKind: PreviewKind?
+    /// True when neither the filename allowlists nor the system type database
+    /// could classify this file, but its bytes might still be plain text.
+    /// `loadFolder` reads a bounded prefix for these and only these.
+    let needsContentSniff: Bool
     let imageDimensions: String?
     /// True if the backing path existed at construction time. Meaningful
     /// mainly for root shortcuts — deep-folder items are always true (they
@@ -195,16 +203,21 @@ struct FileItem: Identifiable, Hashable {
             self.volumeKind = nil
         }
 
-        // previewKind — pure string comparisons, but depends on isDirectory.
+        // previewKind — routing runs in three layers, cheapest first:
+        //   1. the filename / extension allowlists below (pure string work)
+        //   2. the system type database (metadata only, ~2.7 µs per item)
+        //   3. a bounded content sniff, run later by loadFolder for whatever
+        //      the first two couldn't classify (~23 µs, off-main, capped)
+        // Layer 3 is what lets arbitrary suffixes (`config.before-systray-…`)
+        // and extensionless files preview at all — no allowlist can cover
+        // those, and a file that silently refuses to peek reads as a bug.
         let ext = url.pathExtension.lowercased()
         let fileName = url.lastPathComponent.lowercased()
+        var sniffCandidate = false
         if isDir {
             self.previewKind = nil
-        } else if isTextFileName(fileName) {
-            self.previewKind = .text
-        } else if ext.isEmpty {
-            self.previewKind = nil
-        } else if imageExts.contains(ext)     { self.previewKind = .image }
+        } else if isTextFileName(fileName)     { self.previewKind = .text }
+        else if imageExts.contains(ext)        { self.previewKind = .image }
         else if ext == "pdf"                   { self.previewKind = .pdf }
         else if markdownExts.contains(ext)     { self.previewKind = .markdown }
         else if textExts.contains(ext)         { self.previewKind = .text }
@@ -212,7 +225,23 @@ struct FileItem: Identifiable, Hashable {
         else if audioExts.contains(ext)        { self.previewKind = .audio }
         else if quicklookExts.contains(ext)    { self.previewKind = .quicklook }
         else if archiveExts.contains(ext)      { self.previewKind = .archive }
-        else                                   { self.previewKind = nil }
+        else {
+            let type = ext.isEmpty ? nil : UTType(filenameExtension: ext)
+            if let type, type.conforms(to: .plainText) {
+                // System-known plain text: .diff, .mk, .tex, .hs, .command…
+                // `.plainText` rather than `.text` on purpose — `.text` also
+                // matches rich formats (RTF, SVG, HTML) that the allowlists
+                // above route to QuickLook or a dedicated view instead.
+                self.previewKind = .text
+            } else {
+                self.previewKind = nil
+                // Sniff unless the system positively identified a non-text
+                // type. A dynamic type means "unknown", which tells us
+                // nothing, so those still get read.
+                sniffCandidate = !(type.map { !$0.isDynamic && !$0.conforms(to: .text) } ?? false)
+            }
+        }
+        self.needsContentSniff = sniffCandidate && self.exists
 
         // imageDimensions — fast header-only CGImageSource read, images only.
         if self.previewKind == .image,
@@ -228,4 +257,61 @@ struct FileItem: Identifiable, Hashable {
 
     func hash(into hasher: inout Hasher) { hasher.combine(url) }
     static func == (lhs: FileItem, rhs: FileItem) -> Bool { lhs.url == rhs.url }
+
+    // MARK: - Content sniffing (preview routing layer 3)
+
+    /// Bytes read when deciding whether an unclassified file is plain text.
+    /// A fixed prefix means a 2 GB file costs the same as a 2 KB one.
+    static let sniffByteCount = 4096
+
+    /// Maximum sniffs `loadFolder` performs for one folder. At ~23 µs each a
+    /// full budget costs a few milliseconds; the cap exists so a directory of
+    /// thousands of unknown-type files can't inflate load time.
+    static let contentSniffBudget = 200
+
+    /// Upgrades every item the metadata layers couldn't classify to `.text`
+    /// when its bytes say so, leaving the rest untouched. Capped by `budget`
+    /// so a directory of thousands of unknown-type files can't inflate load
+    /// time — at ~23 µs per sniff a full budget costs a few milliseconds.
+    ///
+    /// Does file I/O: call it off the main actor. `loadFolder` already is.
+    nonisolated static func resolveUnclassifiedText(in items: inout [FileItem],
+                                                    budget: Int = contentSniffBudget) {
+        let candidates = items.indices.filter { items[$0].needsContentSniff }
+        for i in candidates.prefix(budget) where looksLikeText(at: items[i].url) {
+            items[i].previewKind = .text
+        }
+    }
+
+    /// Does this file's leading data look like UTF-8 text?
+    ///
+    /// Same rule git and `file(1)` use: a NUL byte means binary, otherwise the
+    /// prefix must decode as UTF-8. Only called for items with
+    /// `needsContentSniff`, so the cost is paid for a handful per folder.
+    nonisolated static func looksLikeText(at url: URL) -> Bool {
+        // Never open a fifo, socket, or device node: FileHandle blocks
+        // indefinitely on one, which would hang the whole folder load.
+        guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey]),
+              values.isRegularFile == true,
+              let handle = try? FileHandle(forReadingFrom: url) else { return false }
+        defer { try? handle.close() }
+
+        guard var data = try? handle.read(upToCount: sniffByteCount),
+              !data.isEmpty else { return false }   // empty file: nothing to preview
+        if data.contains(0) { return false }
+
+        // A capped read can land mid-character. Drop a trailing incomplete
+        // UTF-8 sequence (up to 3 continuation bytes plus its lead byte) so a
+        // perfectly good text file isn't rejected purely because of where the
+        // cap fell. Over-trimming is harmless — it only shortens the sample.
+        if data.count == sniffByteCount {
+            var dropped = 0
+            while dropped < 3, let last = data.last, last & 0b1100_0000 == 0b1000_0000 {
+                data.removeLast()
+                dropped += 1
+            }
+            if let last = data.last, last >= 0xC0 { data.removeLast() }
+        }
+        return String(data: data, encoding: .utf8) != nil
+    }
 }
