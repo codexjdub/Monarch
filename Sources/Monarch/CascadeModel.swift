@@ -62,9 +62,19 @@ final class CascadeModel: ObservableObject {
     // Peek window manager (levels 1+). Level 0 is the NSPopover, not owned here.
     private let peekManager = PeekWindowManager()
 
-    // FSEvents watchers, one per .folder level (including level 0 roots).
+    // FSEvents watchers, one per open peek level (levels 1+).
+    //
+    // Level 0 deliberately has no watcher. `folderDidChange` only reloads
+    // levels 1+, so a level-0 watcher could never refresh the shortcut list;
+    // while the popover is closed (`levels.count == 1`) every callback woke
+    // the main queue to iterate an empty range, and while a shortcut was
+    // drilled into, `openFolderPeek` had already installed its own watcher on
+    // that same folder, so the level-0 stream only produced duplicate reloads.
+    // Nested shortcuts made it worse — FSEvents watches recursively, so one
+    // write under ~/Documents/Code/Monarch fired three overlapping streams.
+    // Measured at 6% CPU during a build with the popover shut. Don't add it
+    // back without first making level 0 actually respond to the callback.
     private var watchers: [Int: [FolderWatcher]] = [:]
-    private var level0WatcherPaths: [String] = []
 
     /// Monotonic token per level. Incremented whenever we kick off an async
     /// load; the async completion only applies if its token still matches.
@@ -470,25 +480,7 @@ final class CascadeModel: ObservableObject {
                 closeDeeperThan(0)
             }
         }
-        // Watch directory shortcuts so drilling in reflects live changes.
-        // File shortcuts don't need watching (no folder listing to refresh).
         updateFilterHighlight(forLevel: 0)
-        installWatchersForLevel0()
-    }
-
-    private func installWatchersForLevel0() {
-        let folderShortcuts = shortcutStore.shortcuts.filter { !$0.isUnresolved && $0.url.hasDirectoryPath }
-        let paths = folderShortcuts.map { $0.url.standardizedFileURL.path }
-        guard paths != level0WatcherPaths else { return }
-
-        var ws: [FolderWatcher] = []
-        for shortcut in folderShortcuts {
-            ws.append(FolderWatcher(url: shortcut.url) { [weak self] in
-                self?.folderDidChange(url: shortcut.url)
-            })
-        }
-        watchers[0] = ws
-        level0WatcherPaths = paths
     }
 
     private func installWatcher(forLevel level: Int, url: URL) {
@@ -501,7 +493,6 @@ final class CascadeModel: ObservableObject {
 
     private func removeWatchers(forLevel level: Int) {
         watchers[level] = nil
-        if level == 0 { level0WatcherPaths = [] }
     }
 
     /// FSEvents fired for `url`. Reload any .folder levels whose source

@@ -357,11 +357,19 @@ class StatusItemController: NSObject {
         // Global monitors fire for events in OTHER apps — exactly what we need
         // to detect a Finder drag. leftMouseDragged marks the drag active;
         // leftMouseUp clears it once the drag ends (drop or cancel).
+        //
+        // leftMouseDragged arrives at mouse-move frequency for the whole
+        // duration of any system-wide drag, and leftMouseUp for every click in
+        // any app. Both writes are idempotent, so dispatch only on an actual
+        // state transition — otherwise a single drag queues hundreds of
+        // main-queue blocks that re-set a Bool to the value it already holds.
         dragBeginMonitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDragged) { [weak self] _ in
-            DispatchQueue.main.async { self?.model.externalDragActive = true }
+            guard let self, !self.model.externalDragActive else { return }
+            DispatchQueue.main.async { self.model.externalDragActive = true }
         }
         dragEndMonitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseUp) { [weak self] _ in
-            DispatchQueue.main.async { self?.model.externalDragActive = false }
+            guard let self, self.model.externalDragActive else { return }
+            DispatchQueue.main.async { self.model.externalDragActive = false }
         }
     }
 
