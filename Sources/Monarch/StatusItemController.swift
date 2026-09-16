@@ -360,16 +360,26 @@ class StatusItemController: NSObject {
         //
         // leftMouseDragged arrives at mouse-move frequency for the whole
         // duration of any system-wide drag, and leftMouseUp for every click in
-        // any app. Both writes are idempotent, so dispatch only on an actual
-        // state transition — otherwise a single drag queues hundreds of
-        // main-queue blocks that re-set a Bool to the value it already holds.
+        // any app. Both writes are idempotent, so act only on a real state
+        // transition — otherwise a single drag does hundreds of redundant
+        // writes of a value the flag already holds.
+        //
+        // Write directly, never through DispatchQueue.main.async. These
+        // handlers are already main-actor isolated — that is the only reason
+        // the synchronous read of `model.externalDragActive` below compiles —
+        // so a queued write would split the check and the act across two
+        // run-loop turns. A dragged/up pair delivered before the queue drained
+        // would then read stale state and skip a transition, leaving the flag
+        // stuck: a stuck `true` swallows the next click-outside dismissal and
+        // stops peeks auto-closing, a stuck `false` lets the popover close
+        // mid-drag and tear down these very monitors.
         dragBeginMonitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDragged) { [weak self] _ in
             guard let self, !self.model.externalDragActive else { return }
-            DispatchQueue.main.async { self.model.externalDragActive = true }
+            self.model.externalDragActive = true
         }
         dragEndMonitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseUp) { [weak self] _ in
             guard let self, self.model.externalDragActive else { return }
-            DispatchQueue.main.async { self.model.externalDragActive = false }
+            self.model.externalDragActive = false
         }
     }
 

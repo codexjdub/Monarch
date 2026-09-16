@@ -113,19 +113,11 @@ final class PureLogicTests: XCTestCase {
         }
     }
 
-    /// A type the system positively knows is not text must never cost a read.
-    /// `public.png` is an Apple-declared type, present on every machine.
-    func testKnownBinaryTypeSkipsSniff() throws {
-        let dir = try makeDir("binaryskip")
-        defer { try? FileManager.default.removeItem(at: dir) }
-        let url = dir.appendingPathComponent("photo.png")
-        try Data([0x89, 0x50, 0x4E, 0x47]).write(to: url)
-        let item = FileItem(url: url)
-        XCTAssertEqual(item.previewKind, .image)
-        XCTAssertFalse(item.needsContentSniff)
-    }
-
     /// Layer 3 gate: only genuinely unclassified files become candidates.
+    /// (`photo.png` below also covers "a type we already route never costs a
+    /// read" — it resolves at layer 1, so the layer-2 skip is not what's under
+    /// test there; asserting that directly would need a system-known non-text
+    /// extension outside every allowlist, which is machine-dependent.)
     func testContentSniffCandidates() throws {
         let dir = try makeDir("candidates")
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -182,6 +174,49 @@ final class PureLogicTests: XCTestCase {
             XCTAssertTrue(FileItem.looksLikeText(at: try write("straddle-\(pad)", data)),
                           "character split across the read cap must still read as text")
         }
+
+        // A read shorter than the cap can split a character too — network
+        // filesystems return short reads. Trimming must not be conditional on
+        // having read exactly `sniffByteCount`.
+        var shortSplit = Data(repeating: UInt8(ascii: "a"), count: 100)
+        shortSplit.append(Data([0xE2, 0x82]))   // first two bytes of €
+        XCTAssertTrue(FileItem.looksLikeText(at: try write("shortsplit", shortSplit)),
+                      "a split character below the cap must still read as text")
+
+        // ...but only bytes that could BE a split character may be dropped.
+        // 0xFF starts no UTF-8 sequence, so it must survive to fail the decode.
+        var stray = Data(repeating: UInt8(ascii: "a"), count: FileItem.sniffByteCount - 1)
+        stray.append(0xFF)
+        stray.append(0x41)
+        XCTAssertFalse(FileItem.looksLikeText(at: try write("stray", stray)),
+                       "a stray invalid byte must not be trimmed away")
+    }
+
+    /// The trim must remove a cut-off character and nothing else.
+    func testDroppingTruncatedTrailingCharacter() {
+        let cap = FileItem.sniffByteCount
+
+        var complete = Data(repeating: UInt8(ascii: "a"), count: cap - 3)
+        complete.append("€".data(using: .utf8)!)        // ends exactly at the cap
+        XCTAssertEqual(FileItem.droppingTruncatedTrailingCharacter(complete).count, cap,
+                       "a complete character at the boundary must be kept")
+
+        var split = Data(repeating: UInt8(ascii: "a"), count: cap - 2)
+        split.append("€".data(using: .utf8)!)           // last byte falls past the cap
+        XCTAssertEqual(
+            FileItem.droppingTruncatedTrailingCharacter(split.prefix(cap)).count, cap - 2,
+            "a split character must be dropped whole")
+
+        let invalid = Data([0x61, 0x62, 0xFF])
+        XCTAssertEqual(FileItem.droppingTruncatedTrailingCharacter(invalid), invalid,
+                       "a byte that starts no sequence is left for the decoder")
+
+        let ascii = Data([0x61, 0x62, 0x63])
+        XCTAssertEqual(FileItem.droppingTruncatedTrailingCharacter(ascii), ascii)
+
+        let onlyLead = Data([0xE2])
+        XCTAssertEqual(FileItem.droppingTruncatedTrailingCharacter(onlyLead), onlyLead,
+                       "trimming must never consume everything that was read")
     }
 
     /// The sniff pass is capped so a directory of thousands of unknown-type

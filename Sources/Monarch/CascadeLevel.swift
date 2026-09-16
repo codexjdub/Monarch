@@ -183,17 +183,9 @@ extension CascadeModel {
             )
         }
 
-        var visibleItems = displayableContents
+        let visibleItems = displayableContents
             .map { FileItem(url: $0) }
             .filter { showHidden || !$0.isHidden }
-
-        // Preview routing layer 3. The extension allowlists and the system
-        // type database classify almost everything; for the leftovers, read a
-        // bounded prefix and decide from the bytes. This is what lets files
-        // with arbitrary suffixes (`config.before-systray-after-scratchpad`)
-        // or no extension at all open a text peek. Safe here: loadFolder
-        // already runs off-main, and the pass is internally capped.
-        FileItem.resolveUnclassifiedText(in: &visibleItems)
 
         // Footer total reflects what the user actually sees: when hidden files
         // are filtered out, their bytes are excluded too.
@@ -203,7 +195,7 @@ extension CascadeModel {
         // name tie-break for ties on the primary key) keeps the sort closure
         // a strict weak ordering — Bool inversion of an `ascending` flag was
         // unsafe because equal keys mapped to `true` in both directions.
-        let allSorted = visibleItems.sorted { a, b in
+        var allSorted = visibleItems.sorted { a, b in
             if a.isDirectory != b.isDirectory { return a.isDirectory }
             let primary: ComparisonResult
             switch sortOrder {
@@ -232,6 +224,24 @@ extension CascadeModel {
             }
             return descending ? cmp == .orderedDescending : cmp == .orderedAscending
         }
+
+        // Preview routing layer 3. The extension allowlists and the system
+        // type database classify almost everything; for the leftovers, read a
+        // bounded prefix and decide from the bytes. This is what lets files
+        // with arbitrary suffixes (`config.before-systray-after-scratchpad`)
+        // or no extension at all open a text peek. Safe here: loadFolder
+        // already runs off-main, and the pass is internally capped.
+        //
+        // Runs *after* the sort, deliberately. The budget caps how many files
+        // get read, so in a folder with more candidates than budget it also
+        // decides which ones become previewable. Sorted order is what the user
+        // sees and is stable across reloads; `contentsOfDirectory` order is
+        // neither, so sniffing first made previewability wobble between
+        // reloads and change when Show Hidden Files was toggled.
+        //
+        // Everything below derives from `allSorted`, so the upgrades flow into
+        // the sections and the returned items.
+        FileItem.resolveUnclassifiedText(in: &allSorted)
 
         // Build sections: Pinned, Recent, All.
         let pinnedSet = Set(pinnedURLs.map(\.path))

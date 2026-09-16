@@ -241,7 +241,17 @@ struct FileItem: Identifiable, Hashable {
                 sniffCandidate = !(type.map { !$0.isDynamic && !$0.conforms(to: .text) } ?? false)
             }
         }
-        self.needsContentSniff = sniffCandidate && self.exists
+        // Layer 3 opens and reads the file, so it must not run where a read is
+        // expensive or can hang. Opening a dataless iCloud file materializes
+        // it — a silent download, up to `contentSniffBudget` of them per
+        // folder load — and a regular file on a wedged network mount blocks
+        // indefinitely, which `looksLikeText`'s `isRegularFile` guard does not
+        // catch (that only excludes fifos, sockets and device nodes).
+        // Blocking matters doubly because `loadFolder` runs on the cooperative
+        // thread pool, where a parked worker starves every other `Task`.
+        // External drives are ordinary local block devices — they still sniff.
+        let readCouldStallOrDownload = self.volumeKind == .iCloud || self.volumeKind == .network
+        self.needsContentSniff = sniffCandidate && self.exists && !readCouldStallOrDownload
 
         // imageDimensions — fast header-only CGImageSource read, images only.
         if self.previewKind == .image,
@@ -296,22 +306,52 @@ struct FileItem: Identifiable, Hashable {
               let handle = try? FileHandle(forReadingFrom: url) else { return false }
         defer { try? handle.close() }
 
-        guard var data = try? handle.read(upToCount: sniffByteCount),
+        guard let data = try? handle.read(upToCount: sniffByteCount),
               !data.isEmpty else { return false }   // empty file: nothing to preview
         if data.contains(0) { return false }
+        return String(data: droppingTruncatedTrailingCharacter(data), encoding: .utf8) != nil
+    }
 
-        // A capped read can land mid-character. Drop a trailing incomplete
-        // UTF-8 sequence (up to 3 continuation bytes plus its lead byte) so a
-        // perfectly good text file isn't rejected purely because of where the
-        // cap fell. Over-trimming is harmless — it only shortens the sample.
-        if data.count == sniffByteCount {
-            var dropped = 0
-            while dropped < 3, let last = data.last, last & 0b1100_0000 == 0b1000_0000 {
-                data.removeLast()
-                dropped += 1
-            }
-            if let last = data.last, last >= 0xC0 { data.removeLast() }
+    /// Removes a trailing UTF-8 character that the read cut in half — and only
+    /// that. Without it a valid text file reads as binary purely because of
+    /// where the read stopped.
+    ///
+    /// Two things it deliberately does *not* do:
+    ///
+    /// - It doesn't gate on having read exactly `sniffByteCount`. A short read
+    ///   is legal — `read(upToCount:)` only promises not to *exceed* the
+    ///   request, and network filesystems do return short — so gating on the
+    ///   cap left a short read that split a character falling straight through
+    ///   to a failed decode, which is the same false negative by another route.
+    /// - It only drops bytes that genuinely could be a cut-off character: a
+    ///   valid lead byte (0xC2–0xF4) whose declared length runs past the end,
+    ///   plus its continuation bytes. A stray 0xFF stays put so the decoder
+    ///   still rejects it, and a *complete* character sitting exactly at the
+    ///   boundary is left alone instead of being needlessly trimmed.
+    nonisolated static func droppingTruncatedTrailingCharacter(_ data: Data) -> Data {
+        let tail = data.suffix(4)   // no UTF-8 character is longer than this
+        guard var index = tail.indices.last else { return data }
+
+        // Walk back over the final character's continuation bytes.
+        var continuations = 0
+        while continuations < 3, index > tail.startIndex,
+              tail[index] & 0b1100_0000 == 0b1000_0000 {
+            index -= 1
+            continuations += 1
         }
-        return String(data: data, encoding: .utf8) != nil
+
+        let declaredLength: Int
+        switch tail[index] {
+        case 0xC2...0xDF: declaredLength = 2
+        case 0xE0...0xEF: declaredLength = 3
+        case 0xF0...0xF4: declaredLength = 4
+        default:          return data   // ASCII, or a byte no character starts with
+        }
+
+        // Keep it when the character is complete, or when trimming would
+        // consume everything we read.
+        let present = continuations + 1
+        guard present < declaredLength, data.count > present else { return data }
+        return data.dropLast(present)
     }
 }
