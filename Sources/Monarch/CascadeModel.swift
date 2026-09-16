@@ -703,6 +703,23 @@ final class CascadeModel: ObservableObject {
         keyboardFocusVersion &+= 1
     }
 
+    /// Move keyboard focus within a level, dropping a child peek the row being
+    /// left behind had opened.
+    ///
+    /// A peek belongs to the row that opened it, so once focus moves off that
+    /// row the peek is showing something the highlight no longer points at.
+    /// Mouse hover has always handled this — `mouseHover` closes or replaces
+    /// deeper levels on every row change — but the arrow keys only cancelled
+    /// *pending* opens and never closed one already on screen, so a preview
+    /// opened with `→` stayed up while focus wandered away from it.
+    ///
+    /// Not used by `keyboardDrillIn`: that moves focus *into* a peek it just
+    /// opened, which must not be torn down.
+    private func moveKeyboardFocus(to index: Int, atLevel level: Int) {
+        if pathIndices[level] != index { closeDeeperThan(level) }
+        setKeyboardFocus(Focus(level: level, index: index))
+    }
+
     func keyUp() {
         let l = focus.level
         guard levels.indices.contains(l) else { return }
@@ -710,7 +727,7 @@ final class CascadeModel: ObservableObject {
         cancelPendingOpen()
         pendingClose?.cancel(); pendingClose = nil
         guard !visible.isEmpty else {
-            setKeyboardFocus(Focus(level: l, index: Focus.noFocus))
+            moveKeyboardFocus(to: Focus.noFocus, atLevel: l)
             return
         }
         // No visible focus yet -> up jumps to the last visible item.
@@ -720,7 +737,7 @@ final class CascadeModel: ObservableObject {
         } else {
             next = visible.last ?? Focus.noFocus
         }
-        setKeyboardFocus(Focus(level: l, index: next))
+        moveKeyboardFocus(to: next, atLevel: l)
     }
 
     func keyDown() {
@@ -730,7 +747,7 @@ final class CascadeModel: ObservableObject {
         cancelPendingOpen()
         pendingClose?.cancel(); pendingClose = nil
         guard !visible.isEmpty else {
-            setKeyboardFocus(Focus(level: l, index: Focus.noFocus))
+            moveKeyboardFocus(to: Focus.noFocus, atLevel: l)
             return
         }
         // No visible focus yet -> down jumps to the first visible item.
@@ -740,7 +757,7 @@ final class CascadeModel: ObservableObject {
         } else {
             next = visible.first ?? Focus.noFocus
         }
-        setKeyboardFocus(Focus(level: l, index: next))
+        moveKeyboardFocus(to: next, atLevel: l)
     }
 
     func keyRight() { keyboardDrillIn() }
