@@ -237,7 +237,15 @@ extension CascadeModel {
         // decides which ones become previewable. Sorted order is what the user
         // sees and is stable across reloads; `contentsOfDirectory` order is
         // neither, so sniffing first made previewability wobble between
-        // reloads and change when Show Hidden Files was toggled.
+        // reloads for no visible reason.
+        //
+        // This does NOT make the set independent of the user's settings: the
+        // hidden-file filter runs before the sort, so toggling Show Hidden
+        // still changes membership and therefore which items fall inside the
+        // budget, and so does changing the sort order. Only the unexplainable
+        // reload-to-reload variation is gone. The real fix is to stop choosing
+        // at load time at all — resolve a row's kind on demand when hover or
+        // focus reaches it. See TODO.md.
         //
         // Everything below derives from `allSorted`, so the upgrades flow into
         // the sections and the returned items.
