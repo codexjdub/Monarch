@@ -177,7 +177,8 @@ struct FileItem: Identifiable, Hashable {
         // on the same call so the trailing badge costs nothing extra.
         let resources = try? url.resourceValues(forKeys: [
             .isDirectoryKey, .fileSizeKey, .contentModificationDateKey,
-            .isUbiquitousItemKey, .volumeIsLocalKey, .volumeIsInternalKey
+            .isUbiquitousItemKey, .volumeIsLocalKey, .volumeIsInternalKey,
+            .ubiquitousItemDownloadingStatusKey
         ])
         self.exists = resources != nil
         self.contentModifiedAt = resources?.contentModificationDate
@@ -201,6 +202,34 @@ struct FileItem: Identifiable, Hashable {
             self.volumeKind = .external
         } else {
             self.volumeKind = nil
+        }
+
+        // Whether reading this file's *bytes* would stall or cost a download.
+        // Two things in this initializer do that — the content sniff (layer 3
+        // below) and the imageDimensions header read at the end — and both run
+        // per item on the folder-load path, so both consult this.
+        //
+        // Keyed on whether the read would actually stall or download, not on
+        // where the file lives. Gating on `volumeKind == .iCloud` alone (what
+        // 1.9 shipped) refuses a preview forever to an iCloud file that has
+        // been sitting on disk for months, which is just as wrong in the other
+        // direction.
+        //
+        // Caveat worth knowing: the `resourceValues` call above is itself the
+        // call that blocks on a wedged mount, so this flag can only be
+        // consulted after surviving the hazard it describes. Closing that
+        // needs the reads moved off `init` entirely — see TODO.md.
+        let readWouldStallOrDownload: Bool
+        if resources?.volumeIsLocal == false {
+            readWouldStallOrDownload = true        // network share: can hang
+        } else if resources?.isUbiquitousItem == true {
+            // `.downloaded` and `.current` are already on disk and read like
+            // any local file. `.notDownloaded` — or an unreadable status —
+            // means the bytes aren't here and any read materializes them.
+            let status = resources?.ubiquitousItemDownloadingStatus
+            readWouldStallOrDownload = !(status == .downloaded || status == .current)
+        } else {
+            readWouldStallOrDownload = false
         }
 
         // previewKind — routing runs in three layers, cheapest first:
@@ -241,20 +270,24 @@ struct FileItem: Identifiable, Hashable {
                 sniffCandidate = !(type.map { !$0.isDynamic && !$0.conforms(to: .text) } ?? false)
             }
         }
-        // Layer 3 opens and reads the file, so it must not run where a read is
-        // expensive or can hang. Opening a dataless iCloud file materializes
-        // it — a silent download, up to `contentSniffBudget` of them per
-        // folder load — and a regular file on a wedged network mount blocks
-        // indefinitely, which `looksLikeText`'s `isRegularFile` guard does not
-        // catch (that only excludes fifos, sockets and device nodes).
-        // Blocking matters doubly because `loadFolder` runs on the cooperative
-        // thread pool, where a parked worker starves every other `Task`.
-        // External drives are ordinary local block devices — they still sniff.
-        let readCouldStallOrDownload = self.volumeKind == .iCloud || self.volumeKind == .network
-        self.needsContentSniff = sniffCandidate && self.exists && !readCouldStallOrDownload
+        // Layer 3 opens and reads the file, so it must not run where a read
+        // stalls or downloads — see `readWouldStallOrDownload` above.
+        // `looksLikeText`'s own `isRegularFile` guard does not cover this: it
+        // only excludes fifos, sockets and device nodes, and a regular file on
+        // a wedged mount blocks identically. Blocking matters doubly because
+        // `loadFolder` runs on the cooperative thread pool, where a parked
+        // worker starves every other `Task`.
+        self.needsContentSniff = sniffCandidate && self.exists && !readWouldStallOrDownload
 
-        // imageDimensions — fast header-only CGImageSource read, images only.
-        if self.previewKind == .image,
+        // imageDimensions — header-only CGImageSource read, images only. Cheap
+        // on local storage, but it *is* a read of the file's bytes: on a
+        // not-yet-downloaded iCloud file it materializes the whole image, and
+        // on a wedged network mount it blocks. Unlike the content sniff this
+        // has no budget — it runs for every image in the folder — so leaving
+        // it ungated made the 1.9 sniff gate a half-measure: the capped path
+        // was closed while this uncapped one stayed open on the same volumes.
+        // A row simply shows no dimensions when the read is skipped.
+        if self.previewKind == .image, !readWouldStallOrDownload,
            let src   = CGImageSourceCreateWithURL(url as CFURL, nil),
            let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any],
            let w     = props[kCGImagePropertyPixelWidth]  as? Int,

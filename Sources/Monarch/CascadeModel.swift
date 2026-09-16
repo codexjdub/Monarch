@@ -265,12 +265,13 @@ final class CascadeModel: ObservableObject {
     private func focusFirstVisibleResult(forLevel level: Int) {
         guard filterText[level]?.isEmpty == false else { return }
         guard levels.indices.contains(level) else { return }
-        let visible = visibleIndices(forLevel: level)
-        if let first = visible.first {
-            setKeyboardFocus(Focus(level: level, index: first))
-        } else {
-            setKeyboardFocus(Focus(level: level, index: Focus.noFocus))
-        }
+        // Through moveKeyboardFocus, not setKeyboardFocus: typing a filter
+        // moves the highlight off the row that owns an open peek exactly like
+        // an arrow key does, and must close it for the same reason. Because
+        // ownership is compared by URL, a filter that leaves the previewed row
+        // still first keeps its preview open.
+        moveKeyboardFocus(to: visibleIndices(forLevel: level).first ?? Focus.noFocus,
+                          atLevel: level)
     }
 
     @discardableResult
@@ -703,20 +704,48 @@ final class CascadeModel: ObservableObject {
         keyboardFocusVersion &+= 1
     }
 
+    /// Does the peek at `level + 1` belong to the row at `index`?
+    ///
+    /// Compared **by URL, never by index**. Rows move without changing what
+    /// they are — a sort change, an FSEvents reload, toggling Show Hidden —
+    /// and an index comparison then closes a peek that is still correct, or
+    /// keeps one that is stale. `mouseHover` has always compared this way;
+    /// this is the shared predicate so the two can't drift apart again.
+    private func childPeek(atLevel level: Int, belongsToRowAt index: Int) -> Bool {
+        guard levels.indices.contains(level + 1),
+              levels.indices.contains(level),
+              levels[level].items.indices.contains(index) else { return false }
+        let rowURL = levels[level].items[index].url
+        switch levels[level + 1].content {
+        case .folder:
+            return levels[level + 1].source == rowURL
+        case .preview(_, let previewURL):
+            return previewURL == rowURL
+        }
+    }
+
     /// Move keyboard focus within a level, dropping a child peek the row being
     /// left behind had opened.
     ///
     /// A peek belongs to the row that opened it, so once focus moves off that
     /// row the peek is showing something the highlight no longer points at.
-    /// Mouse hover has always handled this — `mouseHover` closes or replaces
-    /// deeper levels on every row change — but the arrow keys only cancelled
+    /// Mouse hover has always handled this; the arrow keys only cancelled
     /// *pending* opens and never closed one already on screen, so a preview
     /// opened with `→` stayed up while focus wandered away from it.
+    ///
+    /// Every keyboard-driven focus move goes through here — arrows *and* the
+    /// search field, which reaches it via `focusFirstVisibleResult`. Routing
+    /// only the arrows left typing in search as a second door to the same bug.
     ///
     /// Not used by `keyboardDrillIn`: that moves focus *into* a peek it just
     /// opened, which must not be torn down.
     private func moveKeyboardFocus(to index: Int, atLevel level: Int) {
-        if pathIndices[level] != index { closeDeeperThan(level) }
+        // The `levels.count` test short-circuits the common case — arrowing a
+        // list with nothing open — before any teardown work is considered.
+        if levels.count > level + 1,
+           !childPeek(atLevel: level, belongsToRowAt: index) {
+            closeDeeperThan(level)
+        }
         setKeyboardFocus(Focus(level: level, index: index))
     }
 
