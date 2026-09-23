@@ -16,6 +16,10 @@ Monarch.app/
 Monarch *.app/
 *.dSYM/
 
+# Release artifacts — built by `ditto` at release time and attached to the
+# GitHub release, so the local copy is redundant once the release is cut.
+Monarch-*.zip
+
 # Claude local settings (contains user-specific paths)
 .claude/settings.local.json
 
