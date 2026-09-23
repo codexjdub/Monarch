@@ -380,6 +380,11 @@ extension DraggableNSView /* Context Menu */ {
 
         guard includeFinderAndAppActions, urlsToAct.count == 1 else { return }
         menu.addItem(withTitle: "Show in Finder", action: #selector(showInFinder), keyEquivalent: "").target = self
+        // Hidden for a greyed-out shortcut whose target is gone — Finder has
+        // nothing to show for a path that doesn't exist.
+        if item.exists {
+            menu.addItem(withTitle: "Get Info", action: #selector(showInfo), keyEquivalent: "").target = self
+        }
         if !item.isDirectory, let openWithMenu = buildOpenWithMenu(for: item.url) {
             let owItem = NSMenuItem(title: "Open With", action: nil, keyEquivalent: "")
             owItem.submenu = openWithMenu
@@ -550,6 +555,37 @@ extension DraggableNSView /* Actions */ {
         guard let url = fileItem?.url else { return }
         FrequentStore.shared.recordAccess(url)
         NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    /// Opens Finder's own Get Info window for the item. Folder sizes come
+    /// from Finder, so Monarch never walks a directory tree itself.
+    ///
+    /// Uses Finder's "Show Info" Service, not an Apple Event. Services travel
+    /// over the pasteboard and need no Automation permission. An Apple Event
+    /// would prompt "Monarch wants to control Finder" — and with ad-hoc
+    /// signing that grant is tied to a signature that changes on every
+    /// build, so it would prompt again after each rebuild.
+    ///
+    /// Deliberately doesn't record a Frequent access: inspecting an item
+    /// isn't using it.
+    @objc private func showInfo() {
+        guard let url = fileItem?.url else { return }
+        // A private named pasteboard, reused rather than released: a Service
+        // may read it after NSPerformService returns, and releasing it early
+        // would hand Finder an empty request.
+        let pb = NSPasteboard(name: NSPasteboard.Name("com.monarch.app.getinfo"))
+        let filenames = NSPasteboard.PasteboardType("NSFilenamesPboardType")
+        pb.clearContents()
+        pb.writeObjects([url as NSURL])
+        pb.addTypes([filenames], owner: nil)
+        pb.setPropertyList([url.path], forType: filenames)
+
+        if !NSPerformService("Finder/Show Info", pb) {
+            // The Service can be switched off in System Settings → Keyboard →
+            // Keyboard Shortcuts → Services. Fall back to revealing the item
+            // so the click still lands somewhere; ⌘I in Finder finishes it.
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        }
     }
 
     @objc private func openInTerminal() {
