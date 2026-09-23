@@ -574,21 +574,21 @@ struct LevelListBody: View {
     @ViewBuilder private func scrollView(state: CascadeModel.Level) -> some View {
         ScrollViewReader { sp in
             ScrollView {
-                LazyVStack(spacing: 0) {
-                    if isFiltering {
-                        // Flat filtered list, preserving original indices so
-                        // model calls (click, focus, spring-load) remain correct.
-                        ForEach(displayIndices, id: \.self) { idx in
-                            rowView(state: state, item: state.items[idx], idx: idx)
-                        }
-                    } else if state.sections.isEmpty {
-                        rowsView(state: state, range: state.items.indices)
-                    } else {
-                        ForEach(state.sections, id: \.self) { sec in
-                            sectionHeader(sec.title)
-                            rowsView(state: state, range: sec.range)
-                        }
-                    }
+                // Level 0 is a plain VStack on purpose. Every reload gives each
+                // row a new identity (the churn rowView documents), and a
+                // LazyVStack holds on to the rows it replaces — about 16–18
+                // reloads' worth, and reopening the popover doesn't release
+                // them. Level 0's list lives as long as the app and reloads on
+                // every popover open and every volume mount or unmount, so it
+                // sat at 144 row views (~22 MB of live heap) behind a 9-row
+                // menu. A VStack keeps at most the previous set. Peeks stay
+                // lazy because a folder can hold thousands of items; the cost
+                // there is extra rows while a peek on a changing folder stays
+                // open.
+                if level == 0 {
+                    VStack(spacing: 0) { listContent(state: state) }
+                } else {
+                    LazyVStack(spacing: 0) { listContent(state: state) }
                 }
             }
             .onChange(of: model.keyboardFocusVersion) { _ in
@@ -599,6 +599,23 @@ struct LevelListBody: View {
                 withAnimation(.none) {
                     sp.scrollTo(state.items[f.index].id, anchor: .center)
                 }
+            }
+        }
+    }
+
+    @ViewBuilder private func listContent(state: CascadeModel.Level) -> some View {
+        if isFiltering {
+            // Flat filtered list, preserving original indices so
+            // model calls (click, focus, spring-load) remain correct.
+            ForEach(displayIndices, id: \.self) { idx in
+                rowView(state: state, item: state.items[idx], idx: idx)
+            }
+        } else if state.sections.isEmpty {
+            rowsView(state: state, range: state.items.indices)
+        } else {
+            ForEach(state.sections, id: \.self) { sec in
+                sectionHeader(sec.title)
+                rowsView(state: state, range: sec.range)
             }
         }
     }
