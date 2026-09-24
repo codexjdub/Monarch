@@ -106,7 +106,19 @@ class DraggableNSView: NSView, NSDraggingSource {
         guard let window, window.isVisible else { return }
         let mouseInWin = window.mouseLocationOutsideOfEventStream
         let localPoint = convert(mouseInWin, from: nil)
-        guard bounds.contains(localPoint) else { return }
+        // Only the visible part of the row counts. A row scrolled out of the
+        // list still has bounds under whatever sits there in window
+        // coordinates — the header, the footer, even the menu bar above the
+        // popover — and level 0 keeps every row alive (see
+        // LevelListBody.scrollView), so testing bounds alone let an invisible
+        // row take the hover and open a peek beside itself.
+        //
+        // Intersect with bounds; don't use visibleRect by itself. Inside
+        // SwiftUI's hosting it comes back as the whole visible list region in
+        // this view's coordinates, not clipped to the row, so on its own it
+        // made every row claim every point over the list (measured in a
+        // standalone copy of the list, 2026-09-23).
+        guard bounds.intersection(visibleRect).contains(localPoint) else { return }
         onHover?()
     }
 }
